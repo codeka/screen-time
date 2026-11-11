@@ -21,7 +21,7 @@ func setupTestServer(t *testing.T) (*api.Server, func()) {
 		t.Fatalf("Failed to init test db: %v", err)
 	}
 
-	server := api.NewServer(database)
+	server := api.NewServer(database, "")
 
 	cleanup := func() {
 		database.Close()

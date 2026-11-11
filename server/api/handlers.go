@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,18 +20,20 @@ import (
 )
 
 type Server struct {
-	db     *sql.DB
-	hub    *realtime.Hub
-	push   *push.PushManager
-	router *http.ServeMux
+	db        *sql.DB
+	hub       *realtime.Hub
+	push      *push.PushManager
+	router    *http.ServeMux
+	staticDir string
 }
 
-func NewServer(db *sql.DB) *Server {
+func NewServer(db *sql.DB, staticDir string) *Server {
 	s := &Server{
-		db:     db,
-		hub:    realtime.NewHub(),
-		push:   push.NewPushManager(db),
-		router: http.NewServeMux(),
+		db:        db,
+		hub:       realtime.NewHub(),
+		push:      push.NewPushManager(db),
+		router:    http.NewServeMux(),
+		staticDir: staticDir,
 	}
 	s.routes()
 	s.startWatchdog()
@@ -88,6 +92,41 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/push/subscribe", s.withUserAuth(s.handleSavePushSubscription))
 	s.router.HandleFunc("/api/ws/admin", s.handleAdminWebSocket)
 	s.router.HandleFunc("/api/ws/device", s.handleDeviceWebSocket)
+
+	// Static SPA (Web Admin)
+	s.router.HandleFunc("/", s.handleStaticSPA)
+}
+
+func (s *Server) handleStaticSPA(w http.ResponseWriter, r *http.Request) {
+	if s.staticDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Clean path
+	requestedPath := filepath.Clean(r.URL.Path)
+	targetPath := filepath.Join(s.staticDir, requestedPath)
+
+	info, err := os.Stat(targetPath)
+	if err == nil && !info.IsDir() {
+		http.ServeFile(w, r, targetPath)
+		return
+	}
+
+	// Check if file exists inside static directory directly (e.g. /favicon.ico)
+	if strings.Contains(requestedPath, ".") && err == nil {
+		http.ServeFile(w, r, targetPath)
+		return
+	}
+
+	// Fallback to index.html for Angular SPA client-side routes (e.g. /login, /dashboard)
+	indexPath := filepath.Join(s.staticDir, "index.html")
+	if _, err := os.Stat(indexPath); err == nil {
+		http.ServeFile(w, r, indexPath)
+		return
+	}
+
+	http.NotFound(w, r)
 }
 
 // Background watchdog checking for missing device heartbeats

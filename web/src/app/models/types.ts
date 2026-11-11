@@ -55,3 +55,4 @@ export interface PairingCodeResponse {
   pairing_code: string;
   expires_at: string;
 }
+
