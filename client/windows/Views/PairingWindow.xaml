@@ -1,0 +1,67 @@
+<Window x:Class="ScreenTimeClient.Views.PairingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Screen Time Device Registration"
+        Width="460" Height="480"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="SingleBorderWindow"
+        Background="#0F172A">
+    <Grid Margin="32">
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="⏱️" FontSize="44" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+            <TextBlock Text="Device Setup" FontSize="24" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center"/>
+            <TextBlock Text="Enter the 6-character pairing code from the parent portal to link this Windows PC."
+                       FontSize="13" Foreground="#94A3B8" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,24"/>
+
+            <!-- Error Banner -->
+            <Border x:Name="ErrorBanner" Background="#7F1D1D" BorderBrush="#EF4444" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,16" Visibility="Collapsed">
+                <TextBlock x:Name="ErrorText" Text="Invalid code" Foreground="#FECACA" FontSize="13" TextAlignment="Center"/>
+            </Border>
+
+            <!-- Pairing Code Input -->
+            <TextBlock Text="Pairing Code" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" Margin="0,0,0,6"/>
+            <TextBox x:Name="CodeInput" 
+                     FontSize="24" 
+                     FontWeight="Bold" 
+                     TextAlignment="Center" 
+                     CharacterCasing="Upper"
+                     MaxLength="6"
+                     Background="#1E293B" 
+                     Foreground="#818CF8" 
+                     BorderBrush="#475569" 
+                     BorderThickness="1" 
+                     Padding="8"
+                     Height="52"
+                     Margin="0,0,0,16"/>
+
+            <!-- Device Name Input -->
+            <TextBlock Text="Device Name" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" Margin="0,0,0,6"/>
+            <TextBox x:Name="DeviceNameInput" 
+                     FontSize="14" 
+                     Text="Windows PC"
+                     Background="#1E293B" 
+                     Foreground="#F8FAFC" 
+                     BorderBrush="#475569" 
+                     BorderThickness="1" 
+                     Padding="10,8"
+                     Margin="0,0,0,24"/>
+
+            <!-- Submit Button -->
+            <Button x:Name="PairButton" 
+                    Click="OnPairClicked"
+                    Background="#4F46E5" 
+                    Foreground="White" 
+                    FontSize="15" 
+                    FontWeight="SemiBold" 
+                    Height="44" 
+                    Cursor="Hand">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="8"/>
+                    </Style>
+                </Button.Resources>
+                Pair This PC
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

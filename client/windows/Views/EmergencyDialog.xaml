@@ -1,0 +1,30 @@
+<Window x:Class="ScreenTimeClient.Views.EmergencyDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Emergency Contact"
+        Width="380" Height="280"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Background="#1E293B">
+    <Border BorderBrush="#475569" BorderThickness="1" CornerRadius="12" Padding="24">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock Text="📞" FontSize="36" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+            <TextBlock Text="Emergency Contact" FontSize="18" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center"/>
+            <TextBlock Text="If you need immediate help, contact your parents:" FontSize="13" Foreground="#94A3B8" TextAlignment="Center" Margin="0,4,0,16"/>
+
+            <Border Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="16,10" Margin="0,0,0,20">
+                <TextBlock x:Name="PhoneText" Text="No emergency number configured" FontSize="16" FontWeight="SemiBold" Foreground="#38BDF8" HorizontalAlignment="Center"/>
+            </Border>
+
+            <Button Click="OnCloseClicked" Background="#4F46E5" Foreground="White" FontSize="14" FontWeight="SemiBold" Height="36" Width="120" Cursor="Hand">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="6"/>
+                    </Style>
+                </Button.Resources>
+                Close
+            </Button>
+        </StackPanel>
+    </Border>
+</Window>
