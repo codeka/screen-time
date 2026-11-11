@@ -6,7 +6,7 @@ namespace ScreenTimeClient.Config
 {
     public class DeviceConfig
     {
-        public string ServerUrl { get; set; } = "http://localhost:8080";
+        public string ServerUrl { get; set; } = "https://screentime.codeka.com";
         public string DeviceId { get; set; } = string.Empty;
         public string AuthToken { get; set; } = string.Empty;
         public string ChildId { get; set; } = string.Empty;
