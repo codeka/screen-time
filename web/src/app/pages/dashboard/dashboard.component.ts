@@ -915,24 +915,28 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const child = this.activeScheduleChild();
     if (!child) return;
 
-    const promises: Promise<any>[] = [];
+    const rules: ScheduleRule[] = [];
     for (let day = 0; day <= 6; day++) {
       const state = this.scheduleState[day];
-      const rule: ScheduleRule = {
+      rules.push({
         id: state.id,
         child_id: child.id,
         day_of_week: day,
-        start_time: state.start_time,
-        end_time: state.end_time,
+        start_time: state.start_time || '15:00',
+        end_time: state.end_time || '18:00',
         timezone: 'Local',
         enabled: state.enabled
-      };
-      promises.push(this.api.saveSchedule(child.id, rule).toPromise());
+      });
     }
 
-    Promise.all(promises).then(() => {
-      this.activeScheduleChild.set(null);
-      this.refreshChildren();
+    this.api.saveBatchSchedule(child.id, rules).subscribe({
+      next: () => {
+        this.activeScheduleChild.set(null);
+        this.refreshChildren();
+      },
+      error: (err) => {
+        alert('Failed to save schedule: ' + (err.error?.error || err.message));
+      }
     });
   }
 

@@ -72,6 +72,7 @@ func (s *Server) routes() {
 	// Schedules
 	s.router.HandleFunc("GET /api/children/{id}/schedules", s.withUserAuth(s.handleGetChildSchedules))
 	s.router.HandleFunc("POST /api/children/{id}/schedules", s.withUserAuth(s.handleSaveSchedule))
+	s.router.HandleFunc("PUT /api/children/{id}/schedules", s.withUserAuth(s.handleSaveBatchSchedules))
 	s.router.HandleFunc("DELETE /api/schedules/{id}", s.withUserAuth(s.handleDeleteSchedule))
 
 	// Device Pairing
@@ -489,6 +490,79 @@ func (s *Server) handleGetChildSchedules(w http.ResponseWriter, r *http.Request)
 	jsonResp(w, http.StatusOK, list)
 }
 
+func (s *Server) handleSaveBatchSchedules(w http.ResponseWriter, r *http.Request) {
+	childID := r.PathValue("id")
+	var payload struct {
+		Rules []models.ScheduleRule `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"db error: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Clear existing rules for this child to avoid duplicates
+	if _, err := tx.Exec("DELETE FROM schedule_rules WHERE child_id = ?", childID); err != nil {
+		http.Error(w, `{"error":"failed to clear old rules: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	for _, rule := range payload.Rules {
+		ruleID := rule.ID
+		if ruleID == "" {
+			ruleID = auth.GenerateUUID()
+		}
+		tz := rule.Timezone
+		if tz == "" {
+			tz = "Local"
+		}
+		st := rule.StartTime
+		if st == "" {
+			st = "15:00"
+		}
+		et := rule.EndTime
+		if et == "" {
+			et = "18:00"
+		}
+
+		_, err := tx.Exec(`
+			INSERT INTO schedule_rules (id, child_id, day_of_week, start_time, end_time, timezone, enabled)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, ruleID, childID, rule.DayOfWeek, st, et, tz, rule.Enabled)
+		if err != nil {
+			http.Error(w, `{"error":"failed to insert rule: `+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"commit failed: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Notify all connected devices of this child so they can re-evaluate schedule immediately!
+	devRows, _ := s.db.Query("SELECT id FROM devices WHERE child_id = ?", childID)
+	if devRows != nil {
+		for devRows.Next() {
+			var devID string
+			if devRows.Scan(&devID) == nil {
+				s.hub.SendToDevice(devID, map[string]interface{}{
+					"type": "SCHEDULE_UPDATED",
+				})
+			}
+		}
+		devRows.Close()
+	}
+
+	jsonResp(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
 func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 	childID := r.PathValue("id")
 	var req models.ScheduleRule
@@ -505,19 +579,34 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 	if req.Timezone == "" {
 		req.Timezone = "Local"
 	}
+	if req.StartTime == "" {
+		req.StartTime = "15:00"
+	}
+	if req.EndTime == "" {
+		req.EndTime = "18:00"
+	}
 
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Delete any existing rule for this day_of_week for this child to avoid duplicates
+	tx.Exec("DELETE FROM schedule_rules WHERE child_id = ? AND day_of_week = ?", childID, req.DayOfWeek)
+
+	_, err = tx.Exec(`
 		INSERT INTO schedule_rules (id, child_id, day_of_week, start_time, end_time, timezone, enabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			day_of_week = excluded.day_of_week,
-			start_time = excluded.start_time,
-			end_time = excluded.end_time,
-			timezone = excluded.timezone,
-			enabled = excluded.enabled
 	`, ruleID, childID, req.DayOfWeek, req.StartTime, req.EndTime, req.Timezone, req.Enabled)
 	if err != nil {
-		http.Error(w, `{"error":"failed to save schedule"}`+err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"failed to save schedule: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"commit error: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 

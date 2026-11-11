@@ -100,6 +100,14 @@ export class ApiService {
     });
   }
 
+  saveBatchSchedule(childId: string, rules: ScheduleRule[]): Observable<{ status: string }> {
+    return this.http.put<{ status: string }>(
+      `${this.baseUrl}/api/children/${childId}/schedules`,
+      { rules },
+      { headers: this.getHeaders() }
+    );
+  }
+
   deleteSchedule(id: string): Observable<any> {
     return this.http.delete(`${this.baseUrl}/api/schedules/${id}`, {
       headers: this.getHeaders()
