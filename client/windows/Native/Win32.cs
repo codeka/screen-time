@@ -125,12 +125,25 @@ namespace ScreenTimeClient.Native
             }
         }
 
+        public static event Action? OnEmergencyEscape;
+
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
             if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
             {
                 int vkCode = Marshal.ReadInt32(lParam);
                 bool isSysKey = wParam == (IntPtr)WM_SYSKEYDOWN;
+
+                // Developer Safety Hatch: Ctrl + Alt + Shift + Q immediately unlocks!
+                var mods = System.Windows.Input.Keyboard.Modifiers;
+                if ((mods & System.Windows.Input.ModifierKeys.Control) != 0 &&
+                    (mods & System.Windows.Input.ModifierKeys.Alt) != 0 &&
+                    (mods & System.Windows.Input.ModifierKeys.Shift) != 0 &&
+                    (vkCode == 0x51 /* Q */ || vkCode == VK_ESCAPE))
+                {
+                    OnEmergencyEscape?.Invoke();
+                    return IntPtr.Zero; // Allow key through
+                }
 
                 // Suppress Windows Key
                 if (vkCode == VK_LWIN || vkCode == VK_RWIN)
@@ -145,7 +158,7 @@ namespace ScreenTimeClient.Native
                 }
 
                 // Suppress Ctrl+Esc
-                if (vkCode == VK_ESCAPE && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+                if (vkCode == VK_ESCAPE && (mods & System.Windows.Input.ModifierKeys.Control) != 0)
                 {
                     return (IntPtr)1;
                 }

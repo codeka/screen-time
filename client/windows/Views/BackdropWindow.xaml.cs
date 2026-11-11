@@ -39,3 +39,4 @@ namespace ScreenTimeClient.Views
         }
     }
 }
+

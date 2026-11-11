@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using ScreenTimeClient.Config;
 using ScreenTimeClient.Services;
 using ScreenTimeClient.Views;

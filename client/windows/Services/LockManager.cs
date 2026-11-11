@@ -45,6 +45,12 @@ namespace ScreenTimeClient.Services
 
             // Hook realtime events
             _realtime.OnEventReceived += OnRealtimeEvent;
+
+            // Developer Safety Escape: Ctrl + Alt + Shift + Q instantly unlocks for 2 hours!
+            Win32.OnEmergencyEscape += () =>
+            {
+                Unlock(DateTime.Now.AddHours(2), 7200);
+            };
         }
 
         public async Task StartAsync()
@@ -287,3 +293,4 @@ namespace ScreenTimeClient.Services
         }
     }
 }
+
