@@ -268,5 +268,63 @@ func TestCompleteWorkflow(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("Resolve with push token + custom ValidUntil failed: %d, %s", w.Code, w.Body.String())
 	}
+
+	// 15. Child clicks "Request More Time" on warning notification while 90m is still remaining;
+	// parent grants +15m -> time stacks onto existing 90m (~105m = ~6300s)
+	req = httptest.NewRequest("POST", "/api/requests", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Extension request failed: %d, %s", w.Code, w.Body.String())
+	}
+	var reqResp3 map[string]string
+	json.NewDecoder(w.Body).Decode(&reqResp3)
+	reqID3 := reqResp3["request_id"]
+
+	req = httptest.NewRequest("POST", "/api/requests/"+reqID3+"/resolve", bytes.NewBufferString(`{"action":"GRANT","grant_minutes":15}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Grant extension failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var stackedResp models.AccessStatusResponse
+	json.NewDecoder(w.Body).Decode(&stackedResp)
+	if stackedResp.Access != "ALLOWED" || stackedResp.RemainingSeconds < 6200 {
+		t.Fatalf("Expected stacked remaining seconds ~6300s (90m + 15m), got %+v", stackedResp)
+	}
+
+	// 16. Child requests more time again while still active; parent DENIES -> remaining time is preserved
+	req = httptest.NewRequest("POST", "/api/requests", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var reqResp4 map[string]string
+	json.NewDecoder(w.Body).Decode(&reqResp4)
+	reqID4 := reqResp4["request_id"]
+
+	req = httptest.NewRequest("POST", "/api/requests/"+reqID4+"/resolve", bytes.NewBufferString(`{"action":"DENY"}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Deny extension failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var afterDenyResp models.AccessStatusResponse
+	json.NewDecoder(w.Body).Decode(&afterDenyResp)
+	if afterDenyResp.Access != "ALLOWED" || afterDenyResp.RemainingSeconds < 6200 {
+		t.Fatalf("Expected device to keep remaining time after denied extension, got %+v", afterDenyResp)
+	}
 }
 

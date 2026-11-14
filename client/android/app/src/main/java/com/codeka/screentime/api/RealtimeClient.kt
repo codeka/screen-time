@@ -25,24 +25,33 @@ class RealtimeClient(
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var isRunning = false
 
+    private var isConnected = false
+
     fun start() {
         if (!prefs.isPaired || isRunning) return
         isRunning = true
-        scope.launch {
-            while (isActive && isRunning) {
-                connect()
-                delay(5000)
-            }
-        }
+        connect()
     }
 
     fun stop() {
         isRunning = false
+        isConnected = false
         webSocket?.close(1000, "Normal closure")
         webSocket = null
     }
 
+    private fun scheduleReconnect() {
+        if (!isRunning) return
+        scope.launch {
+            delay(5000)
+            if (isActive && isRunning && !isConnected) {
+                connect()
+            }
+        }
+    }
+
     private fun connect() {
+        if (!isRunning || isConnected) return
         try {
             val baseUri = URI(prefs.serverUrl)
             val scheme = if (baseUri.scheme == "https") "wss" else "ws"
@@ -51,6 +60,7 @@ class RealtimeClient(
             val url = "$scheme://$host/api/ws/device?token=$token"
 
             val request = Request.Builder().url(url).build()
+            isConnected = true
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
@@ -62,12 +72,20 @@ class RealtimeClient(
                     }
                 }
 
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    isConnected = false
+                    scheduleReconnect()
+                }
+
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    // Reconnect on next loop
+                    isConnected = false
+                    scheduleReconnect()
                 }
             })
         } catch (e: Exception) {
+            isConnected = false
             e.printStackTrace()
+            scheduleReconnect()
         }
     }
 }

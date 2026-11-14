@@ -24,6 +24,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.codeka.screentime.ScreenTimeApp
 import com.codeka.screentime.api.ApiClient
@@ -40,6 +41,11 @@ import java.util.Date
 import java.util.Locale
 
 class ScreenTimeService : Service() {
+
+    companion object {
+        const val ACTION_REQUEST_MORE_TIME = "com.codeka.screentime.ACTION_REQUEST_MORE_TIME"
+        private const val WARNING_NOTIFICATION_ID = 2002
+    }
 
     private lateinit var prefs: DevicePrefs
     private lateinit var api: ApiClient
@@ -93,6 +99,23 @@ class ScreenTimeService : Service() {
         checkAccessAndApply()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_REQUEST_MORE_TIME) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(WARNING_NOTIFICATION_ID)
+            scope.launch {
+                val success = api.requestScreenTime()
+                val toastMsg = if (success) {
+                    "Screen time request sent to parent!"
+                } else {
+                    "Could not send request. Please try again."
+                }
+                Toast.makeText(this@ScreenTimeService, toastMsg, Toast.LENGTH_SHORT).show()
+            }
+        }
+        return START_STICKY
+    }
+
     private fun setupRealtime() {
         realtime = RealtimeClient(prefs) { type, data ->
             handler.post {
@@ -131,6 +154,8 @@ class ScreenTimeService : Service() {
     }
 
     private fun lock() {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(WARNING_NOTIFICATION_ID)
         if (isLocked && overlayView != null) return
         isLocked = true
 
@@ -159,6 +184,8 @@ class ScreenTimeService : Service() {
     }
 
     private fun unlock(seconds: Long) {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(WARNING_NOTIFICATION_ID)
         isLocked = false
         remainingSeconds = if (seconds > 0) seconds else 1800L
         warned5Min = false
@@ -319,16 +346,27 @@ class ScreenTimeService : Service() {
     }
 
     private fun sendWarningNotification(title: String, message: String) {
+        val requestIntent = Intent(this, ScreenTimeService::class.java).apply {
+            action = ACTION_REQUEST_MORE_TIME
+        }
+        val requestPendingIntent = PendingIntent.getService(
+            this,
+            2003,
+            requestIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(this, ScreenTimeApp.CHANNEL_ALERTS)
             .setContentTitle(title)
             .setContentText(message)
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .addAction(0, "✋ Request More Time", requestPendingIntent)
             .build()
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(2002, notification)
+        manager.notify(WARNING_NOTIFICATION_ID, notification)
     }
 
     private fun buildForegroundNotification(): Notification {

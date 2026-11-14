@@ -832,7 +832,7 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 	}
 
 	reqID := auth.GenerateUUID()
-	now := time.Now()
+	now := time.Now().UTC()
 
 	_, err = s.db.Exec(`
 		INSERT INTO screen_time_requests (id, device_id, child_id, status, created_at)
@@ -852,6 +852,12 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 		WHERE d.id = ?
 	`, claims.DeviceID).Scan(&childName, &devName, &familyID)
 
+	curAccess, _, _, _ := s.evaluateDeviceAccess(claims.DeviceID, claims.ChildID, now)
+	pushBody := fmt.Sprintf("%s is requesting screen time on %s", childName, devName)
+	if curAccess == "ALLOWED" {
+		pushBody = fmt.Sprintf("%s is requesting more screen time on %s", childName, devName)
+	}
+
 	// 1. WebSocket broadcast to connected parents
 	s.hub.BroadcastToFamily(familyID, map[string]interface{}{
 		"type":               "SCREEN_TIME_REQUESTED",
@@ -867,7 +873,7 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 	actionToken, _ := auth.GeneratePushActionToken(familyID, reqID)
 	s.push.SendToFamily(familyID, push.PushPayload{
 		Title: "Screen Time Request",
-		Body:  fmt.Sprintf("%s is requesting screen time on %s", childName, devName),
+		Body:  pushBody,
 		Tag:   "screen-time-request-" + reqID,
 		Data: map[string]interface{}{
 			"type":         "SCREEN_TIME_REQUEST",
@@ -966,7 +972,12 @@ func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 			if payload.GrantMinutes <= 0 {
 				payload.GrantMinutes = 30
 			}
-			validUntil = now.Add(time.Duration(payload.GrantMinutes) * time.Minute).UTC()
+			// If the device already has active remaining time, add the granted minutes onto its current expiry!
+			baseTime := now
+			if curAccess, _, curUntil, _ := s.evaluateDeviceAccess(devID, childID, now); curAccess == "ALLOWED" && curUntil != nil && curUntil.After(now) {
+				baseTime = *curUntil
+			}
+			validUntil = baseTime.Add(time.Duration(payload.GrantMinutes) * time.Minute).UTC()
 		}
 		grantID := auth.GenerateUUID()
 
@@ -1003,11 +1014,13 @@ func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.db.Exec("UPDATE screen_time_requests SET status = 'DENIED', resolved_at = ? WHERE id = ?", now, reqID)
 
-		// Signal device that request was denied
-		s.hub.SendToDevice(devID, map[string]interface{}{
-			"type":   "REQUEST_DENIED",
-			"access": "LOCKED",
-		})
+		// Only lock the device if it doesn't still have remaining valid time (e.g. denied an extension request)
+		if curAccess, _, _, _ := s.evaluateDeviceAccess(devID, childID, now); curAccess != "ALLOWED" {
+			s.hub.SendToDevice(devID, map[string]interface{}{
+				"type":   "REQUEST_DENIED",
+				"access": "LOCKED",
+			})
+		}
 
 		s.hub.BroadcastToFamily(familyID, map[string]interface{}{
 			"type":       "REQUEST_RESOLVED",
