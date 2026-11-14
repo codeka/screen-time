@@ -161,7 +161,14 @@ interface EndTimeModalTarget {
                             @if (getRemainingSeconds(dev) > 0) {
                               <span class="device-badge active">ACTIVE</span>
                               <button class="btn-device-edit" (click)="openEditEndTimeForDevice(child, dev)" title="Change when this device locks">
-                                ✏️ Edit End Time
+                                ✏️ Edit Time
+                              </button>
+                              <button
+                                class="btn-device-lock"
+                                [disabled]="lockingDeviceId() === dev.id"
+                                (click)="forceLockDevice(dev)"
+                                title="Force this device to lock immediately">
+                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock Now' }}
                               </button>
                             } @else {
                               <span class="device-badge" [ngClass]="dev.status === 'OFFLINE' ? 'offline' : 'locked'">
@@ -169,6 +176,13 @@ interface EndTimeModalTarget {
                               </span>
                               <button class="btn-device-unlock" (click)="openEditEndTimeForDevice(child, dev)" title="Unlock until a specific time">
                                 🔓 Unlock…
+                              </button>
+                              <button
+                                class="btn-device-lock"
+                                [disabled]="lockingDeviceId() === dev.id"
+                                (click)="forceLockDevice(dev)"
+                                title="Force this device to lock immediately">
+                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock Now' }}
                               </button>
                             }
                           </div>
@@ -736,6 +750,24 @@ interface EndTimeModalTarget {
     .btn-device-unlock:hover {
       background: #334155;
     }
+    .btn-device-lock {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.38);
+      color: #fca5a5;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-device-lock:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.32);
+    }
+    .btn-device-lock:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
     .device-badge {
       font-size: 0.6875rem;
       font-weight: 700;
@@ -1069,6 +1101,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   endTimeModal = signal<EndTimeModalTarget | null>(null);
   endTimeInput = '';
   savingEndTime = signal<boolean>(false);
+  lockingDeviceId = signal<string | null>(null);
   endTimeError = signal<string>('');
   upcomingHourPresets = signal<{ label: string; value: string }[]>([]);
 
@@ -1410,6 +1443,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
         }
       });
     }
+  }
+
+  forceLockDevice(dev: Device) {
+    this.lockingDeviceId.set(dev.id);
+    this.api.setDeviceGrant(dev.id, 'LOCK').subscribe({
+      next: () => {
+        this.lockingDeviceId.set(null);
+        this.refreshPendingRequests();
+        this.refreshChildren();
+      },
+      error: (err) => {
+        this.lockingDeviceId.set(null);
+        alert('Failed to lock device: ' + (err.error?.error || err.message));
+      }
+    });
   }
 
   lockDeviceNow() {
