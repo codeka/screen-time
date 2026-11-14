@@ -35,6 +35,8 @@ yarn-error.log*
 *.userosscache
 *.sln.docstates
 *.suo
+client/windows/publish/
+client/windows/installer_output/
 
 # Android & Gradle
 .gradle/
@@ -43,6 +45,12 @@ app/build/
 local.properties
 *.apk
 *.aab
+*.keystore
+*.jks
+
+# Release & Deploy outputs
+releases/
+screentime_deploy.zip
 
 # IDEs
 .idea/

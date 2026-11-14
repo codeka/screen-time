@@ -8,7 +8,7 @@ class DevicePrefs(context: Context) {
         context.getSharedPreferences("screentime_prefs", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = prefs.getString("server_url", "http://10.0.0.99:8080") ?: "http://10.0.0.99:8080"
+        get() = prefs.getString("server_url", "https://screentime.codeka.com") ?: "https://screentime.codeka.com"
         set(value) = prefs.edit().putString("server_url", value).apply()
 
     var deviceId: String

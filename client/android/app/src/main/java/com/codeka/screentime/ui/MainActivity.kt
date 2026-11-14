@@ -29,16 +29,16 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: DevicePrefs
     private lateinit var api: ApiClient
+    private var hasOverlayPermissionState = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = DevicePrefs(this)
         api = ApiClient(prefs)
+        hasOverlayPermissionState.value = Settings.canDrawOverlays(this)
 
         setContent {
-            var hasOverlayPermission by remember {
-                mutableStateOf(Settings.canDrawOverlays(this))
-            }
+            val hasOverlayPermission by hasOverlayPermissionState
             var isPaired by remember {
                 mutableStateOf(prefs.isPaired)
             }
@@ -90,7 +90,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (Settings.canDrawOverlays(this) && prefs.isPaired) {
+        val canDraw = Settings.canDrawOverlays(this)
+        hasOverlayPermissionState.value = canDraw
+        if (canDraw && prefs.isPaired) {
             startLockService()
         }
     }

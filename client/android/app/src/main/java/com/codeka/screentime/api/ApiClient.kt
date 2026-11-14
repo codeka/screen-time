@@ -49,23 +49,25 @@ class ApiClient(private val prefs: DevicePrefs) {
                     .post(body)
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                return@withContext client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val respBody = response.body?.string() ?: return@use null
                         val obj = JSONObject(respBody)
-                        return@use PairResult(
+                        PairResult(
                             deviceId = obj.getString("device_id"),
                             authToken = obj.getString("auth_token"),
                             childId = obj.getString("child_id"),
                             childDisplayName = obj.optString("child_display_name", ""),
                             emergencyContact = obj.optString("emergency_contact", "")
                         )
+                    } else {
+                        null
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                null
             }
-            null
         }
 
     suspend fun getAccessStatus(): AccessStatusResult? = withContext(Dispatchers.IO) {
@@ -77,11 +79,11 @@ class ApiClient(private val prefs: DevicePrefs) {
                 .get()
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            return@withContext client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val respBody = response.body?.string() ?: return@use null
                     val obj = JSONObject(respBody)
-                    return@use AccessStatusResult(
+                    AccessStatusResult(
                         access = obj.optString("access", "LOCKED"),
                         reason = obj.optString("reason", "NONE"),
                         validUntil = if (obj.has("valid_until")) obj.getString("valid_until") else null,
@@ -89,12 +91,14 @@ class ApiClient(private val prefs: DevicePrefs) {
                         childDisplayName = obj.optString("child_display_name", ""),
                         emergencyContact = obj.optString("emergency_contact", "")
                     )
+                } else {
+                    null
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            null
         }
-        null
     }
 
     suspend fun requestScreenTime(): Boolean = withContext(Dispatchers.IO) {
@@ -107,8 +111,8 @@ class ApiClient(private val prefs: DevicePrefs) {
                 .post(body)
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                return@use response.isSuccessful
+            return@withContext client.newCall(request).execute().use { response ->
+                response.isSuccessful
             }
         } catch (e: Exception) {
             e.printStackTrace()
