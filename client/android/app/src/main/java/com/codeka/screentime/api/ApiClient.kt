@@ -80,7 +80,16 @@ class ApiClient(private val prefs: DevicePrefs) {
                 .build()
 
             return@withContext client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
+                if (response.code == 410) {
+                    AccessStatusResult(
+                        access = "DEREGISTERED",
+                        reason = "NONE",
+                        validUntil = null,
+                        remainingSeconds = 0L,
+                        childDisplayName = "",
+                        emergencyContact = ""
+                    )
+                } else if (response.isSuccessful) {
                     val respBody = response.body?.string() ?: return@use null
                     val obj = JSONObject(respBody)
                     AccessStatusResult(
@@ -120,8 +129,8 @@ class ApiClient(private val prefs: DevicePrefs) {
         }
     }
 
-    suspend fun sendHeartbeat(uptimeSeconds: Long, status: String) = withContext(Dispatchers.IO) {
-        if (!prefs.isPaired) return@withContext
+    suspend fun sendHeartbeat(uptimeSeconds: Long, status: String): Boolean = withContext(Dispatchers.IO) {
+        if (!prefs.isPaired) return@withContext false
         try {
             val json = JSONObject().apply {
                 put("uptime_seconds", uptimeSeconds)
@@ -134,9 +143,12 @@ class ApiClient(private val prefs: DevicePrefs) {
                 .post(body)
                 .build()
 
-            client.newCall(request).execute().close()
+            return@withContext client.newCall(request).execute().use { response ->
+                response.code == 410
+            }
         } catch (e: Exception) {
             // Heartbeat failures logged silently
+            false
         }
     }
 }

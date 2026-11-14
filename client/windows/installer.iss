@@ -46,8 +46,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startupicon"; Description: "Start Screen Time automatically when Windows starts"; GroupDescription: "Startup:"
 
 [Files]
+#ifndef PublishDir
+  #define PublishDir "publish"
+#endif
 ; Include ALL files from the publish directory (self-contained .NET app)
-Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

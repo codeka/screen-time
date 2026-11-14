@@ -41,33 +41,45 @@ namespace ScreenTimeClient
             }
 
             _config = DeviceConfig.Load(serverOverride);
-            _api = new ApiClient(_config);
-            _realtime = new RealtimeClient(_config);
-            _lockManager = new LockManager(_config, _api, _realtime);
 
             if (!_config.IsPaired)
             {
-                var pairingWin = new PairingWindow(_config, _api);
-                pairingWin.OnPairingSuccessful += async () =>
-                {
-                    _api = new ApiClient(_config);
-                    _realtime = new RealtimeClient(_config);
-                    _lockManager = new LockManager(_config, _api, _realtime);
-                    await _lockManager.StartAsync();
-                };
-                pairingWin.Closed += (s, args) =>
-                {
-                    if (!_config.IsPaired)
-                    {
-                        Shutdown();
-                    }
-                };
-                pairingWin.Show();
+                ShowPairingWindow();
             }
             else
             {
-                await _lockManager.StartAsync();
+                await StartEnforcementAsync();
             }
+        }
+
+        private void ShowPairingWindow()
+        {
+            _api = new ApiClient(_config);
+            var pairingWin = new PairingWindow(_config, _api);
+            pairingWin.OnPairingSuccessful += async () =>
+            {
+                await StartEnforcementAsync();
+            };
+            pairingWin.Closed += (s, args) =>
+            {
+                if (!_config.IsPaired)
+                {
+                    Shutdown();
+                }
+            };
+            pairingWin.Show();
+        }
+
+        private async System.Threading.Tasks.Task StartEnforcementAsync()
+        {
+            _api = new ApiClient(_config);
+            _realtime = new RealtimeClient(_config);
+            _lockManager = new LockManager(_config, _api, _realtime);
+            _lockManager.OnDeregistered += () =>
+            {
+                ShowPairingWindow();
+            };
+            await _lockManager.StartAsync();
         }
 
         protected override void OnExit(ExitEventArgs e)

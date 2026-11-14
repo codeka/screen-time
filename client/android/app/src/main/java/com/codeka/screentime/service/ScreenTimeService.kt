@@ -136,6 +136,10 @@ class ScreenTimeService : Service() {
                     "REQUEST_DENIED" -> {
                         lock()
                     }
+
+                    "DEVICE_DEREGISTERED" -> {
+                        handleDeregistered()
+                    }
                 }
             }
         }
@@ -143,14 +147,36 @@ class ScreenTimeService : Service() {
     }
 
     private fun checkAccessAndApply() {
+        if (!prefs.isPaired) return
         scope.launch {
             val status = api.getAccessStatus()
-            if (status != null && status.access == "ALLOWED") {
+            if (status?.access == "DEREGISTERED") {
+                handleDeregistered()
+            } else if (status != null && status.access == "ALLOWED") {
                 unlock(status.remainingSeconds)
             } else {
                 lock()
             }
         }
+    }
+
+    private fun handleDeregistered() {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(WARNING_NOTIFICATION_ID)
+        isLocked = false
+        if (overlayView != null) {
+            try {
+                windowManager.removeView(overlayView)
+            } catch (_: Exception) {
+            }
+            overlayView = null
+        }
+        prefs.clear()
+        realtime.stop()
+        countdownRunnable?.let { handler.removeCallbacks(it) }
+        heartbeatRunnable?.let { handler.removeCallbacks(it) }
+        Toast.makeText(this, "Screen Time profile removed. Device unpaired.", Toast.LENGTH_LONG).show()
+        stopSelf()
     }
 
     private fun lock() {
@@ -337,7 +363,10 @@ class ScreenTimeService : Service() {
             override fun run() {
                 scope.launch {
                     val uptimeSec = SystemClock.elapsedRealtime() / 1000
-                    api.sendHeartbeat(uptimeSec, if (isLocked) "LOCKED" else "ACTIVE")
+                    val deregistered = api.sendHeartbeat(uptimeSec, if (isLocked) "LOCKED" else "ACTIVE")
+                    if (deregistered) {
+                        handleDeregistered()
+                    }
                 }
                 handler.postDelayed(this, 60000)
             }
@@ -387,7 +416,10 @@ class ScreenTimeService : Service() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(screenReceiver)
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {
+        }
         realtime.stop()
         countdownRunnable?.let { handler.removeCallbacks(it) }
         heartbeatRunnable?.let { handler.removeCallbacks(it) }

@@ -208,6 +208,17 @@ func (s *Server) withDeviceAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, `{"error":"invalid device token"}`, http.StatusUnauthorized)
 			return
 		}
+		// Ensure device and its child profile are still registered
+		var exists int
+		if err := s.db.QueryRow(`
+			SELECT COUNT(1)
+			FROM devices d
+			JOIN child_profiles cp ON d.child_id = cp.id
+			WHERE d.id = ?
+		`, claims.DeviceID).Scan(&exists); err == nil && exists == 0 {
+			http.Error(w, `{"error":"device deregistered","access":"DEREGISTERED"}`, http.StatusGone)
+			return
+		}
 		ctx := context.WithValue(r.Context(), deviceClaimsKey, claims)
 		next(w, r.WithContext(ctx))
 	}
@@ -471,11 +482,65 @@ func (s *Server) handleDeleteChild(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := r.Context().Value(userClaimsKey).(*auth.UserClaims)
 
-	_, err := s.db.Exec("DELETE FROM child_profiles WHERE id = ? AND family_id = ?", id, claims.FamilyID)
+	// Verify child belongs to this parent's family
+	var childName string
+	if err := s.db.QueryRow("SELECT display_name FROM child_profiles WHERE id = ? AND family_id = ?", id, claims.FamilyID).Scan(&childName); err != nil {
+		http.Error(w, `{"error":"child not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Collect paired device IDs before deleting so we can notify them in real-time
+	var deviceIDs []string
+	devRows, err := s.db.Query("SELECT id FROM devices WHERE child_id = ?", id)
+	if err == nil {
+		for devRows.Next() {
+			var devID string
+			if devRows.Scan(&devID) == nil {
+				deviceIDs = append(deviceIDs, devID)
+			}
+		}
+		devRows.Close()
+	}
+
+	tx, err := s.db.Begin()
 	if err != nil {
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
 	}
+	defer tx.Rollback()
+
+	// Explicitly delete child-related records in dependency order so cleanup succeeds
+	// regardless of SQLite connection-pool foreign_keys pragma state
+	tx.Exec("DELETE FROM heartbeats WHERE device_id IN (SELECT id FROM devices WHERE child_id = ?)", id)
+	tx.Exec("DELETE FROM time_grants WHERE device_id IN (SELECT id FROM devices WHERE child_id = ?)", id)
+	tx.Exec("DELETE FROM screen_time_requests WHERE child_id = ?", id)
+	tx.Exec("DELETE FROM schedule_rules WHERE child_id = ?", id)
+	tx.Exec("DELETE FROM devices WHERE child_id = ?", id)
+
+	if _, err := tx.Exec("DELETE FROM child_profiles WHERE id = ? AND family_id = ?", id, claims.FamilyID); err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"commit error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Signal all connected devices of this child to unlock and unpair immediately
+	for _, devID := range deviceIDs {
+		s.hub.SendToDevice(devID, map[string]interface{}{
+			"type":   "DEVICE_DEREGISTERED",
+			"access": "DEREGISTERED",
+		})
+	}
+
+	// Notify connected parent dashboards
+	s.hub.BroadcastToFamily(claims.FamilyID, map[string]interface{}{
+		"type":     "CHILD_DELETED",
+		"child_id": id,
+	})
+
 	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -1228,6 +1293,17 @@ func (s *Server) handleDeviceWebSocket(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ValidateDeviceToken(token)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var exists int
+	if err := s.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM devices d
+		JOIN child_profiles cp ON d.child_id = cp.id
+		WHERE d.id = ?
+	`, claims.DeviceID).Scan(&exists); err == nil && exists == 0 {
+		http.Error(w, "device deregistered", http.StatusGone)
 		return
 	}
 

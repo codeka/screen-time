@@ -123,6 +123,9 @@ interface EndTimeModalTarget {
                       <button class="btn-icon" title="Pair New Device" (click)="openPairingModal(child)">
                         📱 Pair Device
                       </button>
+                      <button class="btn-icon danger" title="Remove / de-register child" (click)="promptDeleteChild(child)">
+                        🗑️ Remove
+                      </button>
                     </div>
                   </div>
 
@@ -407,6 +410,35 @@ interface EndTimeModalTarget {
           </div>
         </div>
       }
+
+      <!-- Remove / De-register Child Confirmation Modal -->
+      @if (childToDelete(); as targetChild) {
+        <div class="modal-backdrop" (click)="childToDelete.set(null)">
+          <div class="modal-card" (click)="$event.stopPropagation()">
+            <div class="modal-header-between">
+              <h3>Remove {{ targetChild.display_name }}?</h3>
+              <button class="btn-close" (click)="childToDelete.set(null)">✕</button>
+            </div>
+            <p class="modal-subtitle">
+              @if (targetChild.devices && targetChild.devices.length > 0) {
+                This will permanently remove <strong>{{ targetChild.display_name }}</strong>, delete their weekly schedule, and de-register
+                <strong>{{ targetChild.devices.length }} paired {{ targetChild.devices.length === 1 ? 'device' : 'devices' }}</strong>
+                (any active lock screens on those devices will automatically unlock and unpair).
+              } @else {
+                This will permanently remove <strong>{{ targetChild.display_name }}</strong> and delete their weekly schedule.
+              }
+            </p>
+            <div class="modal-actions">
+              <button class="btn-secondary" [disabled]="deletingChild()" (click)="childToDelete.set(null)">
+                Cancel
+              </button>
+              <button class="btn-deny" [disabled]="deletingChild()" (click)="confirmDeleteChild()">
+                {{ deletingChild() ? 'Removing…' : '🗑️ Remove Child' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -639,11 +671,13 @@ interface EndTimeModalTarget {
     }
     .child-menu-btns {
       display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
       gap: 0.375rem;
     }
     .btn-icon {
       background: #334155;
-      border: none;
+      border: 1px solid transparent;
       color: #cbd5e1;
       padding: 0.375rem 0.625rem;
       border-radius: 0.375rem;
@@ -653,6 +687,14 @@ interface EndTimeModalTarget {
     }
     .btn-icon:hover {
       background: #475569;
+    }
+    .btn-icon.danger {
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.32);
+      color: #fca5a5;
+    }
+    .btn-icon.danger:hover {
+      background: rgba(239, 68, 68, 0.3);
     }
     .devices-list {
       background: #0f172a;
@@ -1105,10 +1147,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   endTimeError = signal<string>('');
   upcomingHourPresets = signal<{ label: string; value: string }[]>([]);
 
-  // Add child modal state
+  // Add / Remove child modal state
   showAddChildModal = signal<boolean>(false);
   newChildName = '';
   newChildEmergency = '';
+  childToDelete = signal<ChildProfile | null>(null);
+  deletingChild = signal<boolean>(false);
 
   // Pairing code modal state
   activePairingChild = signal<ChildProfile | null>(null);
@@ -1164,7 +1208,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.sub = this.realtime.events$.subscribe((event) => {
       if (event.type === 'SCREEN_TIME_REQUESTED') {
         this.refreshPendingRequests();
-      } else if (event.type === 'REQUEST_RESOLVED' || event.type === 'DEVICE_GRANT_UPDATED') {
+      } else if (
+        event.type === 'REQUEST_RESOLVED' ||
+        event.type === 'DEVICE_GRANT_UPDATED' ||
+        event.type === 'CHILD_DELETED'
+      ) {
         this.refreshPendingRequests();
         this.refreshChildren();
       }
@@ -1493,6 +1541,30 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.newChildName = '';
         this.newChildEmergency = '';
         this.refreshChildren();
+      }
+    });
+  }
+
+  promptDeleteChild(child: ChildProfile) {
+    this.deletingChild.set(false);
+    this.childToDelete.set(child);
+  }
+
+  confirmDeleteChild() {
+    const child = this.childToDelete();
+    if (!child) return;
+
+    this.deletingChild.set(true);
+    this.api.deleteChild(child.id).subscribe({
+      next: () => {
+        this.deletingChild.set(false);
+        this.childToDelete.set(null);
+        this.refreshPendingRequests();
+        this.refreshChildren();
+      },
+      error: (err) => {
+        this.deletingChild.set(false);
+        alert('Failed to remove child: ' + (err.error?.error || err.message));
       }
     });
   }

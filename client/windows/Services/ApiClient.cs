@@ -64,6 +64,10 @@ namespace ScreenTimeClient.Services
             {
                 SetAuthHeader();
                 var resp = await _http.GetAsync("/api/devices/access-status", ct);
+                if (resp.StatusCode == System.Net.HttpStatusCode.Gone)
+                {
+                    return new AccessStatusResponse { Access = "DEREGISTERED" };
+                }
                 if (resp.IsSuccessStatusCode)
                 {
                     return await resp.Content.ReadFromJsonAsync<AccessStatusResponse>(cancellationToken: ct);
@@ -92,7 +96,7 @@ namespace ScreenTimeClient.Services
             }
         }
 
-        public async Task SendHeartbeatAsync(long uptimeSeconds, string status)
+        public async Task<bool> SendHeartbeatAsync(long uptimeSeconds, string status)
         {
             try
             {
@@ -102,9 +106,13 @@ namespace ScreenTimeClient.Services
                     UptimeSeconds = uptimeSeconds,
                     ReportedStatus = status
                 };
-                await _http.PostAsJsonAsync("/api/devices/heartbeat", req);
+                var resp = await _http.PostAsJsonAsync("/api/devices/heartbeat", req);
+                return resp.StatusCode == System.Net.HttpStatusCode.Gone;
             }
-            catch { }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

@@ -73,9 +73,16 @@ def find_java_home() -> str | None:
 
 def build_windows(repo_root: Path, releases_dir: Path):
     win_dir = repo_root / "client" / "windows"
-    publish_dir = win_dir / "publish"
+    publish_name = "publish"
+    publish_dir = win_dir / publish_name
     if publish_dir.exists():
-        shutil.rmtree(publish_dir)
+        try:
+            shutil.rmtree(publish_dir)
+        except PermissionError:
+            publish_name = "publish_staging"
+            publish_dir = win_dir / publish_name
+            if publish_dir.exists():
+                shutil.rmtree(publish_dir)
 
     run_cmd(
         ["dotnet", "publish", "-c", "Release", "-r", "win-x64", "--self-contained", "-o", str(publish_dir)],
@@ -85,7 +92,7 @@ def build_windows(repo_root: Path, releases_dir: Path):
 
     iscc = find_iscc()
     run_cmd(
-        [iscc, str(win_dir / "installer.iss")],
+        [iscc, f"/DPublishDir={publish_name}", str(win_dir / "installer.iss")],
         cwd=win_dir,
         description="Compiling Inno Setup Windows installer",
     )

@@ -326,5 +326,33 @@ func TestCompleteWorkflow(t *testing.T) {
 	if afterDenyResp.Access != "ALLOWED" || afterDenyResp.RemainingSeconds < 6200 {
 		t.Fatalf("Expected device to keep remaining time after denied extension, got %+v", afterDenyResp)
 	}
+
+	// 17. Parent removes / de-registers the child; child disappears from GET /api/children
+	// and paired device receives 410 Gone (DEREGISTERED) on access-status
+	req = httptest.NewRequest("DELETE", "/api/children/"+childID, nil)
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Delete child failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/children", nil)
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var afterDelChildren []models.ChildProfile
+	json.NewDecoder(w.Body).Decode(&afterDelChildren)
+	if len(afterDelChildren) != 0 {
+		t.Fatalf("Expected 0 children after deletion, got %+v", afterDelChildren)
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusGone {
+		t.Fatalf("Expected 410 Gone for deregistered child's device, got %d (%s)", w.Code, w.Body.String())
+	}
 }
 

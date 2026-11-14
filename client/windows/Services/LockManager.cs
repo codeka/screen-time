@@ -24,6 +24,8 @@ namespace ScreenTimeClient.Services
         private readonly DispatcherTimer _heartbeatTimer;
 
         public bool IsLocked { get; private set; } = true;
+        public event Action? OnDeregistered;
+        private bool _isStopped = false;
         private long _remainingSeconds = 0;
         private bool _warned5Min = false;
         private bool _warned1Min = false;
@@ -75,9 +77,16 @@ namespace ScreenTimeClient.Services
 
         public async Task CheckAccessAndApplyAsync()
         {
+            if (_isStopped || !_config.IsPaired) return;
+
             var status = await _api.GetAccessStatusAsync();
             if (status != null)
             {
+                if (status.Access == "DEREGISTERED")
+                {
+                    StopAndDeregister();
+                    return;
+                }
                 if (status.Access == "ALLOWED")
                 {
                     Unlock(status.ValidUntil, status.RemainingSeconds);
@@ -87,6 +96,30 @@ namespace ScreenTimeClient.Services
 
             // Otherwise, lock
             Lock();
+        }
+
+        public void StopAndDeregister()
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_isStopped) return;
+                _isStopped = true;
+
+                _countdownTimer.Stop();
+                _heartbeatTimer.Stop();
+                _realtime.Stop();
+
+                SystemEvents.SessionSwitch -= OnSessionSwitch;
+                SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+
+                IsLocked = false;
+                CloseToast();
+                CloseOverlays();
+                Win32.UninstallKeyboardHook();
+
+                _config.Clear();
+                OnDeregistered?.Invoke();
+            });
         }
 
         public void Lock()
@@ -366,12 +399,21 @@ namespace ScreenTimeClient.Services
             {
                 Lock();
             }
+            else if (type == "DEVICE_DEREGISTERED")
+            {
+                StopAndDeregister();
+            }
         }
 
-        private void SendHeartbeat()
+        private async void SendHeartbeat()
         {
+            if (_isStopped || !_config.IsPaired) return;
             long uptime = Environment.TickCount64 / 1000;
-            _ = _api.SendHeartbeatAsync(uptime, IsLocked ? "LOCKED" : "ACTIVE");
+            bool deregistered = await _api.SendHeartbeatAsync(uptime, IsLocked ? "LOCKED" : "ACTIVE");
+            if (deregistered)
+            {
+                StopAndDeregister();
+            }
         }
     }
 }

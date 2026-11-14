@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: DevicePrefs
     private lateinit var api: ApiClient
     private var hasOverlayPermissionState = mutableStateOf(false)
+    private var isPairedState = mutableStateOf(false)
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
         prefs = DevicePrefs(this)
         api = ApiClient(prefs)
         hasOverlayPermissionState.value = Settings.canDrawOverlays(this)
+        isPairedState.value = prefs.isPaired
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -55,9 +57,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val hasOverlayPermission by hasOverlayPermissionState
-            var isPaired by remember {
-                mutableStateOf(prefs.isPaired)
-            }
+            var isPaired by isPairedState
 
             LaunchedEffect(Unit) {
                 if (hasOverlayPermission && isPaired) {
@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         val canDraw = Settings.canDrawOverlays(this)
         hasOverlayPermissionState.value = canDraw
+        isPairedState.value = prefs.isPaired
         if (canDraw && prefs.isPaired) {
             startLockService()
         }
