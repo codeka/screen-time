@@ -263,6 +263,11 @@ namespace ScreenTimeClient.Services
         {
             if (type == "ACCESS_UPDATE")
             {
+                if (element.TryGetProperty("access", out var acc) && acc.GetString() == "LOCKED")
+                {
+                    Lock();
+                    return;
+                }
                 DateTime? validUntil = null;
                 if (element.TryGetProperty("valid_until", out var vu))
                 {

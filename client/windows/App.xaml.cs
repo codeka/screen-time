@@ -27,7 +27,20 @@ namespace ScreenTimeClient
                 return;
             }
 
-            _config = DeviceConfig.Load();
+            string? serverOverride = Environment.GetEnvironmentVariable("SCREENTIME_SERVER");
+            for (int i = 0; i < e.Args.Length; i++)
+            {
+                if (e.Args[i].StartsWith("--server="))
+                {
+                    serverOverride = e.Args[i].Substring("--server=".Length);
+                }
+                else if (e.Args[i] == "--server" && i + 1 < e.Args.Length)
+                {
+                    serverOverride = e.Args[i + 1];
+                }
+            }
+
+            _config = DeviceConfig.Load(serverOverride);
             _api = new ApiClient(_config);
             _realtime = new RealtimeClient(_config);
             _lockManager = new LockManager(_config, _api, _realtime);

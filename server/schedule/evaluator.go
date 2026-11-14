@@ -11,6 +11,7 @@ import (
 
 type EvaluationResult struct {
 	IsUnrestricted    bool
+	RuleStart         *time.Time
 	ValidUntil        *time.Time
 	RemainingSeconds  int64
 	NextScheduleStart *time.Time
@@ -72,7 +73,9 @@ func EvaluateChildSchedule(database *sql.DB, childID string, now time.Time) (*Ev
 
 		if (nowInLoc.Equal(ruleStart) || nowInLoc.After(ruleStart)) && nowInLoc.Before(ruleEnd) {
 			result.IsUnrestricted = true
+			startUTC := ruleStart.UTC()
 			untilUTC := ruleEnd.UTC()
+			result.RuleStart = &startUTC
 			result.ValidUntil = &untilUTC
 			result.RemainingSeconds = int64(ruleEnd.Sub(nowInLoc).Seconds())
 			return result, nil

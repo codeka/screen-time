@@ -29,6 +29,13 @@ type DeviceClaims struct {
 	jwt.RegisteredClaims
 }
 
+type PushActionClaims struct {
+	FamilyID  string `json:"family_id"`
+	RequestID string `json:"request_id"`
+	Role      string `json:"role"` // "push_action"
+	jwt.RegisteredClaims
+}
+
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 10)
 	return string(bytes), err
@@ -101,6 +108,39 @@ func ValidateDeviceToken(tokenStr string) (*DeviceClaims, error) {
 	if claims, ok := token.Claims.(*DeviceClaims); ok && token.Valid {
 		if claims.Role != "device" {
 			return nil, errors.New("invalid role for device")
+		}
+		return claims, nil
+	}
+	return nil, errors.New("invalid token")
+}
+
+func GeneratePushActionToken(familyID, requestID string) (string, error) {
+	claims := PushActionClaims{
+		FamilyID:  familyID,
+		RequestID: requestID,
+		Role:      "push_action",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecretKey)
+}
+
+func ValidatePushActionToken(tokenStr string) (*PushActionClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &PushActionClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return jwtSecretKey, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if claims, ok := token.Claims.(*PushActionClaims); ok && token.Valid {
+		if claims.Role != "push_action" {
+			return nil, errors.New("invalid role for push action")
 		}
 		return claims, nil
 	}

@@ -8,6 +8,15 @@ import { RealtimeService } from '../../services/realtime.service';
 import { ChildProfile, ScheduleRule, ScreenTimeRequest, Device } from '../../models/types';
 import { Subscription } from 'rxjs';
 
+interface EndTimeModalTarget {
+  mode: 'REQUEST' | 'EDIT_ACTIVE' | 'UNLOCK_DEVICE';
+  requestId?: string;
+  deviceId: string;
+  childName: string;
+  deviceName: string;
+  currentValidUntil?: string;
+}
+
 @Component({
   selector: 'app-dashboard',
   standalone: true,
@@ -67,6 +76,7 @@ import { Subscription } from 'rxjs';
                     <button class="btn-grant primary" (click)="resolve(req.id, 'GRANT', 45)">+45 min</button>
                     <button class="btn-grant" (click)="resolve(req.id, 'GRANT', 60)">+1 hr</button>
                     <button class="btn-grant" (click)="resolve(req.id, 'GRANT', 120)">+2 hr</button>
+                    <button class="btn-grant custom" (click)="openCustomTimeForRequest(req)">🕐 Custom…</button>
                     <button class="btn-deny" (click)="resolve(req.id, 'DENY')">Deny</button>
                   </div>
                 </div>
@@ -131,14 +141,37 @@ import { Subscription } from 'rxjs';
                               {{ dev.platform === 'WINDOWS' ? '💻' : '📱' }}
                             </span>
                             <div>
-                              <span class="device-name">{{ dev.device_name }}</span>
-                              <span class="device-platform">({{ dev.platform }})</span>
+                              <div>
+                                <span class="device-name">{{ dev.device_name }}</span>
+                                <span class="device-platform">({{ dev.platform }})</span>
+                              </div>
+                              @if (getRemainingSeconds(dev) > 0 && dev.valid_until) {
+                                <div class="device-expiry">
+                                  ⏱️ Locks at <strong>{{ formatClockTime(dev.valid_until) }}</strong>
+                                  <span class="expiry-countdown">({{ formatRemaining(getRemainingSeconds(dev)) }} left)</span>
+                                  @if (dev.access_reason === 'SCHEDULE') {
+                                    <span class="expiry-reason">· Schedule</span>
+                                  }
+                                </div>
+                              }
                             </div>
                           </div>
 
-                          <span class="device-badge" [ngClass]="dev.status.toLowerCase()">
-                            {{ dev.status }}
-                          </span>
+                          <div class="device-right-actions">
+                            @if (getRemainingSeconds(dev) > 0) {
+                              <span class="device-badge active">ACTIVE</span>
+                              <button class="btn-device-edit" (click)="openEditEndTimeForDevice(child, dev)" title="Change when this device locks">
+                                ✏️ Edit End Time
+                              </button>
+                            } @else {
+                              <span class="device-badge" [ngClass]="dev.status === 'OFFLINE' ? 'offline' : 'locked'">
+                                {{ dev.status === 'OFFLINE' ? 'OFFLINE' : 'LOCKED' }}
+                              </span>
+                              <button class="btn-device-unlock" (click)="openEditEndTimeForDevice(child, dev)" title="Unlock until a specific time">
+                                🔓 Unlock…
+                              </button>
+                            }
+                          </div>
                         </div>
                       }
                     }
@@ -157,6 +190,106 @@ import { Subscription } from 'rxjs';
           }
         </section>
       </main>
+
+      <!-- Set / Edit End Time Modal -->
+      @if (endTimeModal(); as target) {
+        <div class="modal-backdrop" (click)="endTimeModal.set(null)">
+          <div class="modal-card" (click)="$event.stopPropagation()">
+            <div class="modal-header-between">
+              <div>
+                <h3>
+                  @if (target.mode === 'EDIT_ACTIVE') {
+                    Edit End Time
+                  } @else if (target.mode === 'REQUEST') {
+                    Custom Expiry Time
+                  } @else {
+                    Unlock Until Time
+                  }
+                </h3>
+                <p class="modal-subtitle">
+                  <strong>{{ target.childName }}</strong> · {{ target.deviceName }}
+                  @if (target.currentValidUntil) {
+                    <br />
+                    <span class="current-expiry-note">
+                      Currently locks at {{ formatClockTime(target.currentValidUntil) }}
+                    </span>
+                  }
+                </p>
+              </div>
+              <button class="btn-close" (click)="endTimeModal.set(null)">✕</button>
+            </div>
+
+            <div class="form-group">
+              <label>Lock Device At</label>
+              <input
+                type="time"
+                class="time-picker-lg"
+                [(ngModel)]="endTimeInput" />
+            </div>
+
+            <!-- Quick preset chips -->
+            <div class="preset-section">
+              <div class="preset-label">Quick Presets:</div>
+              <div class="preset-chips">
+                <button type="button" class="chip" (click)="applyRelativeMinutes(15)">+15m</button>
+                <button type="button" class="chip" (click)="applyRelativeMinutes(30)">+30m</button>
+                <button type="button" class="chip" (click)="applyRelativeMinutes(60)">+1h</button>
+                <button type="button" class="chip" (click)="applyRelativeMinutes(120)">+2h</button>
+                @for (preset of upcomingHourPresets(); track preset.value) {
+                  <button
+                    type="button"
+                    class="chip"
+                    [class.selected]="endTimeInput === preset.value"
+                    (click)="endTimeInput = preset.value">
+                    {{ preset.label }}
+                  </button>
+                }
+              </div>
+            </div>
+
+            @if (getTargetPreview(); as preview) {
+              <div class="expiry-preview-banner">
+                🔒 Device will lock <strong>{{ preview.dayLabel }} at {{ preview.clockLabel }}</strong>
+                <span class="preview-duration">({{ preview.durationLabel }} from now)</span>
+              </div>
+            }
+
+            @if (endTimeError()) {
+              <div class="inline-error">{{ endTimeError() }}</div>
+            }
+
+            <div class="modal-actions-split">
+              <div>
+                @if (target.mode === 'EDIT_ACTIVE') {
+                  <button
+                    type="button"
+                    class="btn-deny"
+                    [disabled]="savingEndTime()"
+                    (click)="lockDeviceNow()">
+                    🔒 Lock Now
+                  </button>
+                }
+              </div>
+              <div class="modal-actions-right">
+                <button type="button" class="btn-secondary" (click)="endTimeModal.set(null)">Cancel</button>
+                <button
+                  type="button"
+                  class="btn-primary"
+                  [disabled]="savingEndTime() || !endTimeInput"
+                  (click)="submitEndTime()">
+                  @if (savingEndTime()) {
+                    Saving...
+                  } @else if (target.mode === 'EDIT_ACTIVE') {
+                    Save End Time
+                  } @else {
+                    Unlock Until {{ getTargetPreview()?.clockLabel || endTimeInput }}
+                  }
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
 
       <!-- Add Child Modal -->
       @if (showAddChildModal()) {
@@ -426,6 +559,14 @@ import { Subscription } from 'rxjs';
       background: #10b981;
       color: #0f172a;
     }
+    .btn-grant.custom {
+      background: rgba(99, 102, 241, 0.25);
+      color: #c7d2fe;
+      border: 1px solid rgba(99, 102, 241, 0.45);
+    }
+    .btn-grant.custom:hover {
+      background: rgba(99, 102, 241, 0.4);
+    }
     .btn-deny {
       background: rgba(239, 68, 68, 0.2);
       color: #fca5a5;
@@ -435,6 +576,9 @@ import { Subscription } from 'rxjs';
       font-size: 0.8125rem;
       font-weight: 600;
       cursor: pointer;
+    }
+    .btn-deny:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.32);
     }
     .section-header {
       display: flex;
@@ -455,7 +599,7 @@ import { Subscription } from 'rxjs';
     .children-grid {
       display: grid;
       gap: 1.25rem;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
     }
     .child-card {
       background: #1e293b;
@@ -517,7 +661,8 @@ import { Subscription } from 'rxjs';
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.375rem 0;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
       border-bottom: 1px solid #1e293b;
     }
     .device-row:last-child {
@@ -525,8 +670,12 @@ import { Subscription } from 'rxjs';
     }
     .device-info {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 0.5rem;
+      min-width: 0;
+    }
+    .platform-icon {
+      margin-top: 0.1rem;
     }
     .device-name {
       font-size: 0.8125rem;
@@ -536,6 +685,56 @@ import { Subscription } from 'rxjs';
       font-size: 0.6875rem;
       color: #94a3b8;
       margin-left: 0.25rem;
+    }
+    .device-expiry {
+      margin-top: 0.2rem;
+      font-size: 0.75rem;
+      color: #86efac;
+    }
+    .device-expiry strong {
+      color: #bbf7d0;
+    }
+    .expiry-countdown {
+      color: #94a3b8;
+      margin-left: 0.25rem;
+    }
+    .expiry-reason {
+      color: #818cf8;
+      margin-left: 0.25rem;
+    }
+    .device-right-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0;
+    }
+    .btn-device-edit {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #c7d2fe;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-device-edit:hover {
+      background: rgba(99, 102, 241, 0.35);
+    }
+    .btn-device-unlock {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-device-unlock:hover {
+      background: #334155;
     }
     .device-badge {
       font-size: 0.6875rem;
@@ -591,11 +790,92 @@ import { Subscription } from 'rxjs';
     .modal-card.text-center {
       text-align: center;
     }
+    .modal-card h3 {
+      margin: 0;
+    }
     .modal-subtitle {
       font-size: 0.8125rem;
       color: #94a3b8;
       margin-top: 0.25rem;
       margin-bottom: 1.25rem;
+    }
+    .current-expiry-note {
+      color: #86efac;
+      font-size: 0.75rem;
+    }
+    .time-picker-lg {
+      width: 100%;
+      font-size: 1.5rem !important;
+      font-weight: 700;
+      padding: 0.75rem 1rem !important;
+      text-align: center;
+      color-scheme: dark;
+    }
+    .preset-section {
+      margin-bottom: 1rem;
+    }
+    .preset-label {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-bottom: 0.4rem;
+    }
+    .preset-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.375rem;
+    }
+    .chip {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.3rem 0.6rem;
+      border-radius: 9999px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chip:hover {
+      border-color: #6366f1;
+      color: #f8fafc;
+    }
+    .chip.selected {
+      background: #4f46e5;
+      border-color: #4f46e5;
+      color: white;
+    }
+    .expiry-preview-banner {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #d1fae5;
+      border-radius: 0.5rem;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.8125rem;
+      margin-bottom: 0.75rem;
+    }
+    .preview-duration {
+      color: #6ee7b7;
+      margin-left: 0.25rem;
+    }
+    .inline-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8125rem;
+      margin-bottom: 0.75rem;
+    }
+    .modal-actions-split {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 1.25rem;
+    }
+    .modal-actions-right {
+      display: flex;
+      gap: 0.5rem;
     }
     .pairing-code-box {
       font-family: monospace;
@@ -680,6 +960,10 @@ import { Subscription } from 'rxjs';
       font-size: 0.8125rem;
       font-weight: 600;
       cursor: pointer;
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
     /* Schedule matrix */
     .schedule-matrix {
@@ -779,6 +1063,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   loading = signal<boolean>(true);
   children = signal<ChildProfile[]>([]);
   pendingRequests = signal<ScreenTimeRequest[]>([]);
+  nowMs = signal<number>(Date.now());
+
+  // Set / Edit End Time modal state
+  endTimeModal = signal<EndTimeModalTarget | null>(null);
+  endTimeInput = '';
+  savingEndTime = signal<boolean>(false);
+  endTimeError = signal<string>('');
+  upcomingHourPresets = signal<{ label: string; value: string }[]>([]);
 
   // Add child modal state
   showAddChildModal = signal<boolean>(false);
@@ -803,31 +1095,89 @@ export class DashboardComponent implements OnInit, OnDestroy {
   scheduleState: { [day: number]: { enabled: boolean; start_time: string; end_time: string; id?: string } } = {};
 
   private sub?: Subscription;
+  private pollInterval?: ReturnType<typeof setInterval>;
+  private clockInterval?: ReturnType<typeof setInterval>;
+  private pendingCustomRequestId: string | null = null;
+
+  private readonly boundSwListener = (event: MessageEvent) => {
+    const msg = event.data;
+    if (!msg) return;
+    if (msg.type === 'OPEN_CUSTOM_GRANT' && msg.requestId) {
+      if (msg.deviceId) {
+        this.openModalWithDefaults({
+          mode: 'REQUEST',
+          requestId: msg.requestId,
+          deviceId: msg.deviceId,
+          childName: msg.childName || 'Child',
+          deviceName: msg.deviceName || 'Device'
+        });
+      } else {
+        this.pendingCustomRequestId = msg.requestId;
+      }
+      this.refreshPendingRequests();
+      this.refreshChildren();
+    } else if (msg.type === 'REFRESH_DASHBOARD') {
+      this.refreshPendingRequests();
+      this.refreshChildren();
+    }
+  };
 
   ngOnInit() {
     this.initScheduleState();
+    this.checkInitialCustomRequestParam();
     this.refreshAll();
 
-    // Listen to real-time events
+    // Listen to real-time WebSocket events
     this.sub = this.realtime.events$.subscribe((event) => {
       if (event.type === 'SCREEN_TIME_REQUESTED') {
         this.refreshPendingRequests();
-      } else if (event.type === 'REQUEST_RESOLVED') {
+      } else if (event.type === 'REQUEST_RESOLVED' || event.type === 'DEVICE_GRANT_UPDATED') {
         this.refreshPendingRequests();
         this.refreshChildren();
       }
     });
 
-    // Also poll every 10s as a fallback
-    setInterval(() => {
-      if (this.auth.isLoggedIn()) {
-        this.refreshPendingRequests();
+      // Listen to Service Worker messages (e.g. clicking "Custom…" on a push notification)
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', this.boundSwListener);
       }
-    }, 10000);
-  }
+
+      // Live 1-second clock tick so remaining countdowns update smoothly
+      this.clockInterval = setInterval(() => {
+        this.nowMs.set(Date.now());
+      }, 1000);
+
+      // Poll every 10s as a fallback to keep requests and device expiry states synced
+      this.pollInterval = setInterval(() => {
+        if (this.auth.isLoggedIn()) {
+          this.refreshPendingRequests();
+          this.refreshChildren();
+        }
+      }, 10000);
+    }
 
   ngOnDestroy() {
-    this.sub?.unsubscribe();
+      this.sub?.unsubscribe();
+      if(this.pollInterval) clearInterval(this.pollInterval);
+    if (this.clockInterval) clearInterval(this.clockInterval);
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.removeEventListener('message', this.boundSwListener);
+    }
+  }
+
+  private checkInitialCustomRequestParam() {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get('custom_request');
+    const fromSession = sessionStorage.getItem('screentime_custom_request');
+    const reqId = fromUrl || fromSession;
+    if (reqId) {
+      this.pendingCustomRequestId = reqId;
+      sessionStorage.removeItem('screentime_custom_request');
+      if (fromUrl) {
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
   }
 
   private initScheduleState() {
@@ -848,7 +1198,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   refreshPendingRequests() {
     this.api.getPendingRequests().subscribe({
-      next: (reqs) => this.pendingRequests.set(reqs),
+      next: (reqs) => {
+        this.pendingRequests.set(reqs);
+        if (this.pendingCustomRequestId) {
+          const targetId = this.pendingCustomRequestId;
+          this.pendingCustomRequestId = null;
+          const match = reqs.find((r) => r.id === targetId);
+          if (match) {
+            this.openCustomTimeForRequest(match);
+          }
+        }
+      },
       error: (e) => console.error('Failed to get requests:', e)
     });
   }
@@ -871,6 +1231,208 @@ export class DashboardComponent implements OnInit, OnDestroy {
       }
     });
   }
+
+  // --- End Time Display & Editing Helpers ---
+
+  getRemainingSeconds(dev: Device): number {
+    if (!dev.valid_until) return 0;
+    const expiryMs = new Date(dev.valid_until).getTime();
+    if (isNaN(expiryMs)) return 0;
+    const diff = Math.floor((expiryMs - this.nowMs()) / 1000);
+    return diff > 0 ? diff : 0;
+  }
+
+  formatClockTime(isoString: string): string {
+    const dt = new Date(isoString);
+    if (isNaN(dt.getTime())) return '';
+    return dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  formatRemaining(seconds: number): string {
+    if (seconds <= 0) return '0m';
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.ceil((seconds % 3600) / 60);
+    if (hrs > 0 && mins === 60) {
+      return `${hrs + 1}h 0m`;
+    }
+    if (hrs > 0) {
+      return `${hrs}h ${mins}m`;
+    }
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    return `${mins}m`;
+  }
+
+  openCustomTimeForRequest(req: ScreenTimeRequest) {
+    this.openModalWithDefaults({
+      mode: 'REQUEST',
+      requestId: req.id,
+      deviceId: req.device_id,
+      childName: req.child_display_name || 'Child',
+      deviceName: req.device_name || 'Device'
+    });
+  }
+
+  openEditEndTimeForDevice(child: ChildProfile, dev: Device) {
+    const remaining = this.getRemainingSeconds(dev);
+    this.openModalWithDefaults({
+      mode: remaining > 0 ? 'EDIT_ACTIVE' : 'UNLOCK_DEVICE',
+      deviceId: dev.id,
+      childName: child.display_name,
+      deviceName: dev.device_name,
+      currentValidUntil: remaining > 0 ? dev.valid_until : undefined
+    });
+  }
+
+  private openModalWithDefaults(target: EndTimeModalTarget) {
+    this.endTimeError.set('');
+    this.savingEndTime.set(false);
+    this.buildUpcomingHourPresets();
+
+    if (target.currentValidUntil) {
+      const existing = new Date(target.currentValidUntil);
+      this.endTimeInput = this.dateToHHMM(existing);
+    } else {
+      // Default to 1 hour from now rounded to the nearest 15 minutes
+      const def = new Date(Date.now() + 60 * 60 * 1000);
+      const roundedMins = Math.ceil(def.getMinutes() / 15) * 15;
+      def.setMinutes(roundedMins, 0, 0);
+      this.endTimeInput = this.dateToHHMM(def);
+    }
+
+    this.endTimeModal.set(target);
+  }
+
+  private buildUpcomingHourPresets() {
+    const now = new Date();
+    const presets: { label: string; value: string }[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + i, 0, 0, 0);
+      presets.push({
+        label: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        value: this.dateToHHMM(d)
+      });
+    }
+    this.upcomingHourPresets.set(presets);
+  }
+
+  applyRelativeMinutes(mins: number) {
+    const d = new Date(Date.now() + mins * 60 * 1000);
+    this.endTimeInput = this.dateToHHMM(d);
+  }
+
+  private dateToHHMM(d: Date): string {
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  private computeTargetDate(): Date | null {
+    if (!this.endTimeInput || !this.endTimeInput.includes(':')) return null;
+    const [hStr, mStr] = this.endTimeInput.split(':');
+    const hours = parseInt(hStr, 10);
+    const mins = parseInt(mStr, 10);
+    if (isNaN(hours) || isNaN(mins)) return null;
+
+    const now = new Date(this.nowMs());
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, mins, 0, 0);
+    // If chosen HH:MM is at or earlier than current time, roll to tomorrow
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target;
+  }
+
+  getTargetPreview(): { dayLabel: string; clockLabel: string; durationLabel: string } | null {
+    const target = this.computeTargetDate();
+    if (!target) return null;
+    const now = new Date(this.nowMs());
+    const isToday = target.getDate() === now.getDate() && target.getMonth() === now.getMonth();
+    const diffSecs = Math.max(1, Math.floor((target.getTime() - now.getTime()) / 1000));
+    return {
+      dayLabel: isToday ? 'today' : 'tomorrow',
+      clockLabel: target.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      durationLabel: this.formatRemaining(diffSecs)
+    };
+  }
+
+  submitEndTime() {
+    const targetModal = this.endTimeModal();
+    const targetDate = this.computeTargetDate();
+    if (!targetModal || !targetDate) return;
+
+    this.savingEndTime.set(true);
+    this.endTimeError.set('');
+    const validUntilIso = targetDate.toISOString();
+
+    if (targetModal.mode === 'REQUEST' && targetModal.requestId) {
+      const reqId = targetModal.requestId;
+      this.api.resolveRequest(reqId, 'GRANT', undefined, validUntilIso).subscribe({
+        next: () => {
+          this.savingEndTime.set(false);
+          this.endTimeModal.set(null);
+          this.pendingRequests.update((list) => list.filter((r) => r.id !== reqId));
+          this.refreshChildren();
+        },
+        error: (err) => {
+          // If the request was already resolved in the meantime, fall back to updating the device grant directly
+          if (err.status === 404 && targetModal.deviceId) {
+            this.api.setDeviceGrant(targetModal.deviceId, 'SET', validUntilIso).subscribe({
+              next: () => {
+                this.savingEndTime.set(false);
+                this.endTimeModal.set(null);
+                this.refreshPendingRequests();
+                this.refreshChildren();
+              },
+              error: (e2) => {
+                this.savingEndTime.set(false);
+                this.endTimeError.set(e2.error?.error || 'Failed to set end time.');
+              }
+            });
+            return;
+          }
+          this.savingEndTime.set(false);
+          this.endTimeError.set(err.error?.error || 'Failed to approve request.');
+        }
+      });
+    } else {
+      this.api.setDeviceGrant(targetModal.deviceId, 'SET', validUntilIso).subscribe({
+        next: () => {
+          this.savingEndTime.set(false);
+          this.endTimeModal.set(null);
+          this.refreshPendingRequests();
+          this.refreshChildren();
+        },
+        error: (err) => {
+          this.savingEndTime.set(false);
+          this.endTimeError.set(err.error?.error || 'Failed to update end time.');
+        }
+      });
+    }
+  }
+
+  lockDeviceNow() {
+    const targetModal = this.endTimeModal();
+    if (!targetModal) return;
+
+    this.savingEndTime.set(true);
+    this.endTimeError.set('');
+    this.api.setDeviceGrant(targetModal.deviceId, 'LOCK').subscribe({
+      next: () => {
+        this.savingEndTime.set(false);
+        this.endTimeModal.set(null);
+        this.refreshPendingRequests();
+        this.refreshChildren();
+      },
+      error: (err) => {
+        this.savingEndTime.set(false);
+        this.endTimeError.set(err.error?.error || 'Failed to lock device.');
+      }
+    });
+  }
+
+  // --- Child, Pairing, and Schedule Management ---
 
   createChild() {
     if (!this.newChildName.trim()) return;
@@ -955,4 +1517,3 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.push.subscribe();
   }
 }
-

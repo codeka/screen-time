@@ -98,12 +98,18 @@ class ScreenTimeService : Service() {
             handler.post {
                 when (type) {
                     "ACCESS_UPDATE" -> {
-                        val remaining = data.optLong("remaining_seconds", 1800L)
-                        unlock(remaining)
+                        if (data.optString("access") == "LOCKED") {
+                            lock()
+                        } else {
+                            val remaining = data.optLong("remaining_seconds", 1800L)
+                            unlock(remaining)
+                        }
                     }
+
                     "SCHEDULE_UPDATED" -> {
                         checkAccessAndApply()
                     }
+
                     "REQUEST_DENIED" -> {
                         lock()
                     }
@@ -278,7 +284,10 @@ class ScreenTimeService : Service() {
 
                     if (remainingSeconds in 291..300 && !warned5Min) {
                         warned5Min = true
-                        sendWarningNotification("Screen Time: 5 Minutes Remaining", "Your screen time expires in 5 minutes.")
+                        sendWarningNotification(
+                            "Screen Time: 5 Minutes Remaining",
+                            "Your screen time expires in 5 minutes."
+                        )
                     }
 
                     if (remainingSeconds in 51..60 && !warned1Min) {
@@ -348,7 +357,8 @@ class ScreenTimeService : Service() {
         if (overlayView != null) {
             try {
                 windowManager.removeView(overlayView)
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+            }
         }
         super.onDestroy()
     }

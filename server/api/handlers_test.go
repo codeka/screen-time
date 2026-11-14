@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"screentime-server/api"
+	"screentime-server/auth"
 	"screentime-server/db"
 	"screentime-server/models"
 )
@@ -175,6 +176,97 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Heartbeat failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	// 11. Admin checks GET /api/children and sees active device expiry time
+	req = httptest.NewRequest("GET", "/api/children", nil)
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Get children failed: %d, %s", w.Code, w.Body.String())
+	}
+	var childrenResp []struct {
+		models.ChildProfile
+		Devices []models.Device `json:"devices"`
+	}
+	json.NewDecoder(w.Body).Decode(&childrenResp)
+	if len(childrenResp) != 1 || len(childrenResp[0].Devices) != 1 {
+		t.Fatalf("Expected 1 child with 1 paired device, got %+v", childrenResp)
+	}
+	if childrenResp[0].Devices[0].ValidUntil == nil || childrenResp[0].Devices[0].RemainingSeconds <= 0 {
+		t.Fatalf("Expected device ValidUntil and positive RemainingSeconds, got %+v", childrenResp[0].Devices[0])
+	}
+
+	// 12. Parent edits end time on the device (shortens from 45m to 15m from now)
+	newEnd := time.Now().Add(15 * time.Minute).UTC().Truncate(time.Second)
+	editBytes, _ := json.Marshal(models.SetDeviceGrantRequest{
+		Action:     "SET",
+		ValidUntil: &newEnd,
+	})
+	req = httptest.NewRequest("PUT", "/api/devices/"+devResp.DeviceID+"/grant", bytes.NewReader(editBytes))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Edit device grant failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	// Verify device access-status reflects shortened 15m expiry (<= 905s) instead of old 45m expiry
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var shortenedResp models.AccessStatusResponse
+	json.NewDecoder(w.Body).Decode(&shortenedResp)
+	if shortenedResp.Access != "ALLOWED" || shortenedResp.RemainingSeconds > 905 || shortenedResp.RemainingSeconds < 850 {
+		t.Fatalf("Expected shortened remaining seconds ~900, got %+v", shortenedResp)
+	}
+
+	// 13. Parent locks device immediately via PUT /api/devices/{id}/grant
+	req = httptest.NewRequest("PUT", "/api/devices/"+devResp.DeviceID+"/grant", bytes.NewBufferString(`{"action":"LOCK"}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Lock device failed: %d, %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var lockedResp models.AccessStatusResponse
+	json.NewDecoder(w.Body).Decode(&lockedResp)
+	if lockedResp.Access != "LOCKED" {
+		t.Fatalf("Expected LOCKED after manual lock, got %+v", lockedResp)
+	}
+
+	// 14. Child requests again, resolved via Push Action Token with custom ValidUntil
+	req = httptest.NewRequest("POST", "/api/requests", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var reqResp2 map[string]string
+	json.NewDecoder(w.Body).Decode(&reqResp2)
+	reqID2 := reqResp2["request_id"]
+
+	pushToken, err := auth.GeneratePushActionToken(authResp.User.FamilyID, reqID2)
+	if err != nil {
+		t.Fatalf("Failed to generate push action token: %v", err)
+	}
+	customUntil := time.Now().Add(90 * time.Minute).UTC()
+	customPayload, _ := json.Marshal(models.ResolveScreenTimeRequest{
+		Action:     "GRANT",
+		ValidUntil: &customUntil,
+	})
+	req = httptest.NewRequest("POST", "/api/requests/"+reqID2+"/resolve", bytes.NewReader(customPayload))
+	req.Header.Set("Authorization", "Bearer "+pushToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Resolve with push token + custom ValidUntil failed: %d, %s", w.Code, w.Body.String())
 	}
 }
 

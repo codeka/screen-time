@@ -23,20 +23,41 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  const payloadData = data.data || {};
+  let actions = [];
+
+  if (payloadData.request_id) {
+    const maxActions = (self.Notification && self.Notification.maxActions) || 3;
+    if (maxActions >= 4) {
+      actions = [
+        { action: 'grant_15', title: '+15 Min' },
+        { action: 'grant_30', title: '+30 Min' },
+        { action: 'custom', title: 'Custom…' },
+        { action: 'deny', title: 'Deny' }
+      ];
+    } else if (maxActions === 3) {
+      actions = [
+        { action: 'grant_30', title: '+30 Min' },
+        { action: 'custom', title: 'Custom…' },
+        { action: 'deny', title: 'Deny' }
+      ];
+    } else {
+      actions = [
+        { action: 'grant_30', title: '+30 Min' },
+        { action: 'custom', title: 'Custom…' }
+      ];
+    }
+  }
+
   const options = {
     body: data.body,
     icon: '/favicon.ico',
     badge: '/favicon.ico',
     tag: data.tag || 'screentime-request',
     renotify: true,
-    requireInteraction: true,
-    data: data.data || {},
-    actions: [
-      { action: 'grant_15', title: '+15 Min' },
-      { action: 'grant_30', title: '+30 Min' },
-      { action: 'grant_60', title: '+1 Hour' },
-      { action: 'deny', title: 'Deny' }
-    ]
+    requireInteraction: !!payloadData.request_id,
+    data: payloadData,
+    actions
   };
 
   event.waitUntil(
@@ -50,43 +71,85 @@ self.addEventListener('notificationclick', (event) => {
   const data = notification.data || {};
   notification.close();
 
-  if (action && action.startsWith('grant_')) {
-    const minutes = parseInt(action.replace('grant_', ''), 10);
-    if (data.request_id) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (data.action_token) {
+      headers['Authorization'] = `Bearer ${data.action_token}`;
+    }
+
+    if (action === 'custom' && data.request_id) {
+      const targetUrl = `/?custom_request=${encodeURIComponent(data.request_id)}`;
+      event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+          for (const client of clientList) {
+            client.postMessage({
+              type: 'OPEN_CUSTOM_GRANT',
+              requestId: data.request_id,
+              deviceId: data.device_id,
+              childName: data.child_name,
+              deviceName: data.device_name
+            });
+            if ('focus' in client) {
+              return client.focus();
+            }
+          }
+          if (self.clients.openWindow) {
+            return self.clients.openWindow(targetUrl);
+          }
+        })
+      );
+      return;
+    }
+
+    if (action && action.startsWith('grant_') && data.request_id) {
+      const minutes = parseInt(action.replace('grant_', ''), 10);
       event.waitUntil(
         fetch(`/api/requests/${data.request_id}/resolve`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ action: 'GRANT', grant_minutes: minutes })
-        }).catch(() => {})
+        })
+          .then(() =>
+            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+              clients.forEach((c) => c.postMessage({ type: 'REFRESH_DASHBOARD' }));
+            })
+          )
+          .catch(() => { })
       );
       return;
     }
-  } else if (action === 'deny') {
-    if (data.request_id) {
+
+    if (action === 'deny' && data.request_id) {
       event.waitUntil(
         fetch(`/api/requests/${data.request_id}/resolve`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ action: 'DENY' })
-        }).catch(() => {})
+        })
+          .then(() =>
+            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+              clients.forEach((c) => c.postMessage({ type: 'REFRESH_DASHBOARD' }));
+            })
+          )
+          .catch(() => { })
       );
       return;
     }
-  }
 
-  // If clicked directly without action button, focus or open window
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ('focus' in client) {
-          return client.focus();
+    // Clicked notification body directly: open/focus dashboard (if it's a request, highlight/open it)
+    const defaultUrl = data.request_id ? `/?custom_request=${encodeURIComponent(data.request_id)}` : '/';
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        for (const client of clientList) {
+          if (data.request_id) {
+            client.postMessage({ type: 'REFRESH_DASHBOARD' });
+          }
+          if ('focus' in client) {
+            return client.focus();
+          }
         }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow('/');
-      }
-    })
-  );
-});
-
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(defaultUrl);
+        }
+      })
+    );
+  });

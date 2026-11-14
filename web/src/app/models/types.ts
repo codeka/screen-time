@@ -24,6 +24,9 @@ export interface Device {
   pairing_code?: string;
   last_seen_at?: string;
   status: 'LOCKED' | 'ACTIVE' | 'TAMPERED' | 'OFFLINE' | 'PENDING';
+  valid_until?: string;
+  remaining_seconds?: number;
+  access_reason?: 'GRANT' | 'SCHEDULE' | '';
 }
 
 export interface ScheduleRule {

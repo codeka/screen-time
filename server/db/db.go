@@ -15,6 +15,11 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 PRAGMA busy_timeout = 5000;
 
+CREATE TABLE IF NOT EXISTS server_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS families (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -85,6 +90,7 @@ CREATE TABLE IF NOT EXISTS time_grants (
     request_id TEXT REFERENCES screen_time_requests(id),
     valid_from DATETIME NOT NULL,
     valid_until DATETIME NOT NULL,
+    is_override BOOLEAN NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -121,6 +127,9 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		database.Close()
 		return nil, fmt.Errorf("failed to execute schema: %w", err)
 	}
+
+	// Lightweight migration for existing databases
+	_, _ = database.Exec("ALTER TABLE time_grants ADD COLUMN is_override BOOLEAN NOT NULL DEFAULT 0")
 
 	log.Printf("Initialized SQLite database successfully at: %s", dbPath)
 	return database, nil

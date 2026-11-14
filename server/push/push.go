@@ -17,10 +17,18 @@ type PushManager struct {
 }
 
 func NewPushManager(db *sql.DB) *PushManager {
-	// In production, these can be set via env vars. For local out-of-the-box operation, generate pair if unset.
-	privateKey, publicKey, err := webpush.GenerateVAPIDKeys()
-	if err != nil {
-		log.Printf("Warning: failed to generate VAPID keys: %v", err)
+	var publicKey, privateKey string
+	_ = db.QueryRow("SELECT value FROM server_settings WHERE key = 'vapid_public_key'").Scan(&publicKey)
+	_ = db.QueryRow("SELECT value FROM server_settings WHERE key = 'vapid_private_key'").Scan(&privateKey)
+
+	if publicKey == "" || privateKey == "" {
+		var err error
+		privateKey, publicKey, err = webpush.GenerateVAPIDKeys()
+		if err != nil {
+			log.Printf("Warning: failed to generate VAPID keys: %v", err)
+		} else {
+			_, _ = db.Exec("INSERT OR REPLACE INTO server_settings (key, value) VALUES ('vapid_public_key', ?), ('vapid_private_key', ?)", publicKey, privateKey)
+		}
 	}
 
 	return &PushManager{

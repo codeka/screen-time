@@ -121,10 +121,31 @@ export class ApiService {
     });
   }
 
-  resolveRequest(requestId: string, action: 'GRANT' | 'DENY', grantMinutes?: number): Observable<any> {
-    return this.http.post(
-      `${this.baseUrl}/api/requests/${requestId}/resolve`,
-      { action, grant_minutes: grantMinutes },
+      resolveRequest(
+        requestId: string,
+        action: 'GRANT' | 'DENY',
+        grantMinutes ?: number,
+        validUntil ?: string
+      ): Observable < any > {
+        const body: any = { action };
+        if(validUntil) {
+          body.valid_until = validUntil;
+        } else if(grantMinutes !== undefined) {
+      body.grant_minutes = grantMinutes;
+    }
+    return this.http.post(`${this.baseUrl}/api/requests/${requestId}/resolve`, body, {
+      headers: this.getHeaders()
+    });
+  }
+
+  setDeviceGrant(
+    deviceId: string,
+    action: 'SET' | 'LOCK',
+    validUntil?: string
+  ): Observable<{ status: string; valid_until?: string; remaining_seconds?: number }> {
+    return this.http.put<{ status: string; valid_until?: string; remaining_seconds?: number }>(
+      `${this.baseUrl}/api/devices/${deviceId}/grant`,
+      { action, valid_until: validUntil },
       { headers: this.getHeaders() }
     );
   }

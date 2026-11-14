@@ -82,11 +82,12 @@ func (s *Server) routes() {
 	// Device Access Status (Pre-popup check & polling)
 	s.router.HandleFunc("GET /api/devices/access-status", s.withDeviceAuth(s.handleGetAccessStatus))
 	s.router.HandleFunc("POST /api/devices/heartbeat", s.withDeviceAuth(s.handleDeviceHeartbeat))
+	s.router.HandleFunc("PUT /api/devices/{id}/grant", s.withUserAuth(s.handleSetDeviceGrant))
 
 	// Requests
 	s.router.HandleFunc("POST /api/requests", s.withDeviceAuth(s.handleCreateScreenTimeRequest))
 	s.router.HandleFunc("GET /api/requests/pending", s.withUserAuth(s.handleGetPendingRequests))
-	s.router.HandleFunc("POST /api/requests/{id}/resolve", s.withUserAuth(s.handleResolveRequest))
+	s.router.HandleFunc("POST /api/requests/{id}/resolve", s.handleResolveRequest)
 
 	// Push & Realtime
 	s.router.HandleFunc("GET /api/push/vapid-public-key", s.handleGetVapidPublicKey)
@@ -390,19 +391,31 @@ func (s *Server) handleGetChildren(w http.ResponseWriter, r *http.Request) {
 		Schedules []models.ScheduleRule `json:"schedules"`
 	}
 
+	now := time.Now()
 	children := make([]ChildWithDevices, 0)
 	for rows.Next() {
 		var c models.ChildProfile
 		if err := rows.Scan(&c.ID, &c.FamilyID, &c.DisplayName, &c.EmergencyContact, &c.CreatedAt); err == nil {
 			devRows, _ := s.db.Query(`
 				SELECT id, child_id, platform, device_name, pairing_code, last_seen_at, status
-				FROM devices WHERE child_id = ?
+				FROM devices WHERE child_id = ? AND status != 'PENDING'
 			`, c.ID)
 			devices := make([]models.Device, 0)
 			if devRows != nil {
 				for devRows.Next() {
 					var d models.Device
 					devRows.Scan(&d.ID, &d.ChildID, &d.Platform, &d.DeviceName, &d.PairingCode, &d.LastSeenAt, &d.Status)
+					access, reason, validUntil, remaining := s.evaluateDeviceAccess(d.ID, c.ID, now)
+					if access == "ALLOWED" {
+						d.ValidUntil = validUntil
+						d.RemainingSeconds = remaining
+						d.AccessReason = reason
+						if d.Status == "LOCKED" {
+							d.Status = "ACTIVE"
+						}
+					} else if d.Status == "ACTIVE" {
+						d.Status = "LOCKED"
+					}
 					devices = append(devices, d)
 				}
 				devRows.Close()
@@ -710,6 +723,64 @@ func (s *Server) handlePairDevice(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// evaluateDeviceAccess computes the authoritative access state, reason, and expiry for a device.
+func (s *Server) evaluateDeviceAccess(deviceID, childID string, now time.Time) (string, string, *time.Time, int64) {
+	nowUTC := now.UTC()
+	var grantUntil time.Time
+	var isOverride bool
+	hasActiveGrant := false
+
+	err := s.db.QueryRow(`
+		SELECT valid_until, is_override
+		FROM time_grants
+		WHERE device_id = ? AND valid_until > ?
+		ORDER BY valid_until DESC
+		LIMIT 1
+	`, deviceID, nowUTC).Scan(&grantUntil, &isOverride)
+	if err == nil {
+		hasActiveGrant = true
+		if isOverride {
+			untilUTC := grantUntil.UTC()
+			return "ALLOWED", "GRANT", &untilUTC, int64(grantUntil.Sub(nowUTC).Seconds())
+		}
+	}
+
+	evalResult, schedErr := schedule.EvaluateChildSchedule(s.db, childID, now)
+	hasActiveSchedule := schedErr == nil && evalResult != nil && evalResult.IsUnrestricted && evalResult.ValidUntil != nil
+
+	if hasActiveSchedule && evalResult.RuleStart != nil {
+		// Check whether a parent explicitly overrode/locked the device during this schedule window
+		var overrideCount int
+		_ = s.db.QueryRow(`
+			SELECT COUNT(1)
+			FROM time_grants
+			WHERE device_id = ? AND is_override = 1 AND valid_from >= ? AND valid_until <= ?
+		`, deviceID, evalResult.RuleStart.UTC(), nowUTC).Scan(&overrideCount)
+		if overrideCount > 0 {
+			hasActiveSchedule = false
+		}
+	}
+
+	if hasActiveGrant && hasActiveSchedule {
+		if grantUntil.After(*evalResult.ValidUntil) {
+			untilUTC := grantUntil.UTC()
+			return "ALLOWED", "GRANT", &untilUTC, int64(grantUntil.Sub(nowUTC).Seconds())
+		}
+		return "ALLOWED", "SCHEDULE", evalResult.ValidUntil, evalResult.RemainingSeconds
+	}
+
+	if hasActiveGrant {
+		untilUTC := grantUntil.UTC()
+		return "ALLOWED", "GRANT", &untilUTC, int64(grantUntil.Sub(nowUTC).Seconds())
+	}
+
+	if hasActiveSchedule {
+		return "ALLOWED", "SCHEDULE", evalResult.ValidUntil, evalResult.RemainingSeconds
+	}
+
+	return "LOCKED", "NONE", nil, 0
+}
+
 // Pre-popup check & live polling
 func (s *Server) handleGetAccessStatus(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(deviceClaimsKey).(*auth.DeviceClaims)
@@ -723,47 +794,21 @@ func (s *Server) handleGetAccessStatus(w http.ResponseWriter, r *http.Request) {
 		SELECT display_name, emergency_contact FROM child_profiles WHERE id = ?
 	`, claims.ChildID).Scan(&childName, &emergencyContact)
 
+	access, reason, validUntil, remaining := s.evaluateDeviceAccess(claims.DeviceID, claims.ChildID, now)
 	resp := models.AccessStatusResponse{
-		Access:           "LOCKED",
-		Reason:           "NONE",
+		Access:           access,
+		Reason:           reason,
+		ValidUntil:       validUntil,
+		RemainingSeconds: remaining,
 		EmergencyContact: emergencyContact,
 		ChildDisplayName: childName,
 	}
 
-	// 1. Check for active temporary grant
-	var grantID string
-	var validUntil time.Time
-	err := s.db.QueryRow(`
-		SELECT id, valid_until
-		FROM time_grants
-		WHERE device_id = ? AND valid_until > ?
-		ORDER BY valid_until DESC
-		LIMIT 1
-	`, claims.DeviceID, now).Scan(&grantID, &validUntil)
-
-	if err == nil {
-		resp.Access = "ALLOWED"
-		resp.Reason = "GRANT"
-		resp.ValidUntil = &validUntil
-		resp.RemainingSeconds = int64(validUntil.Sub(now).Seconds())
+	if access == "ALLOWED" {
 		s.db.Exec("UPDATE devices SET status = 'ACTIVE' WHERE id = ?", claims.DeviceID)
-		jsonResp(w, http.StatusOK, resp)
-		return
+	} else {
+		s.db.Exec("UPDATE devices SET status = 'LOCKED' WHERE id = ?", claims.DeviceID)
 	}
-
-	// 2. Check for active recurring weekly schedule
-	evalResult, err := schedule.EvaluateChildSchedule(s.db, claims.ChildID, now)
-	if err == nil && evalResult.IsUnrestricted {
-		resp.Access = "ALLOWED"
-		resp.Reason = "SCHEDULE"
-		resp.ValidUntil = evalResult.ValidUntil
-		resp.RemainingSeconds = evalResult.RemainingSeconds
-		s.db.Exec("UPDATE devices SET status = 'ACTIVE' WHERE id = ?", claims.DeviceID)
-		jsonResp(w, http.StatusOK, resp)
-		return
-	}
-
-	s.db.Exec("UPDATE devices SET status = 'LOCKED' WHERE id = ?", claims.DeviceID)
 	jsonResp(w, http.StatusOK, resp)
 }
 
@@ -819,14 +864,18 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 	})
 
 	// 2. Web Push notification to parents' phones
+	actionToken, _ := auth.GeneratePushActionToken(familyID, reqID)
 	s.push.SendToFamily(familyID, push.PushPayload{
 		Title: "Screen Time Request",
 		Body:  fmt.Sprintf("%s is requesting screen time on %s", childName, devName),
 		Tag:   "screen-time-request-" + reqID,
 		Data: map[string]interface{}{
-			"request_id": reqID,
-			"child_name": childName,
-			"device_name": devName,
+			"type":         "SCREEN_TIME_REQUEST",
+			"request_id":   reqID,
+			"device_id":    claims.DeviceID,
+			"child_name":   childName,
+			"device_name":  devName,
+			"action_token": actionToken,
 		},
 	})
 
@@ -864,7 +913,30 @@ func (s *Server) handleGetPendingRequests(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 	reqID := r.PathValue("id")
-	claims := r.Context().Value(userClaimsKey).(*auth.UserClaims)
+
+	// Authenticate via either standard parent Bearer token OR signed push notification action token
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	rawToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+	var familyID, actorName string
+	var userIDPtr *string
+
+	if userClaims, err := auth.ValidateUserToken(rawToken); err == nil {
+		familyID = userClaims.FamilyID
+		actorName = userClaims.DisplayName
+		uid := userClaims.UserID
+		userIDPtr = &uid
+	} else if pushClaims, err := auth.ValidatePushActionToken(rawToken); err == nil && pushClaims.RequestID == reqID {
+		familyID = pushClaims.FamilyID
+		actorName = "Parent (Notification)"
+	} else {
+		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+		return
+	}
 
 	var payload models.ResolveScreenTimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -878,28 +950,38 @@ func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 		FROM screen_time_requests r
 		JOIN child_profiles cp ON r.child_id = cp.id
 		WHERE r.id = ? AND cp.family_id = ? AND r.status = 'PENDING'
-	`, reqID, claims.FamilyID).Scan(&devID, &childID)
+	`, reqID, familyID).Scan(&devID, &childID)
 
 	if err != nil {
 		http.Error(w, `{"error":"request not found or already resolved"}`, http.StatusNotFound)
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	if payload.Action == "GRANT" {
-		if payload.GrantMinutes <= 0 {
-			payload.GrantMinutes = 30
+		var validUntil time.Time
+		if payload.ValidUntil != nil && payload.ValidUntil.After(now) {
+			validUntil = payload.ValidUntil.UTC()
+		} else {
+			if payload.GrantMinutes <= 0 {
+				payload.GrantMinutes = 30
+			}
+			validUntil = now.Add(time.Duration(payload.GrantMinutes) * time.Minute).UTC()
 		}
-		validUntil := now.Add(time.Duration(payload.GrantMinutes) * time.Minute)
 		grantID := auth.GenerateUUID()
 
+		// Expire any prior active grants for this device so the new end time is authoritative
+		s.db.Exec("UPDATE time_grants SET valid_until = ? WHERE device_id = ? AND valid_until > ?", now, devID, now)
+
 		s.db.Exec(`
-			INSERT INTO time_grants (id, device_id, granted_by_user_id, request_id, valid_from, valid_until)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, grantID, devID, claims.UserID, reqID, now, validUntil)
+			INSERT INTO time_grants (id, device_id, granted_by_user_id, request_id, valid_from, valid_until, is_override)
+			VALUES (?, ?, ?, ?, ?, ?, 1)
+		`, grantID, devID, userIDPtr, reqID, now, validUntil)
 
 		s.db.Exec("UPDATE screen_time_requests SET status = 'APPROVED', resolved_at = ? WHERE id = ?", now, reqID)
 		s.db.Exec("UPDATE devices SET status = 'ACTIVE' WHERE id = ?", devID)
+
+		remainingSecs := int64(validUntil.Sub(now).Seconds())
 
 		// Realtime signal to the managed device to immediately unlock!
 		s.hub.SendToDevice(devID, map[string]interface{}{
@@ -907,16 +989,16 @@ func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 			"access":            "ALLOWED",
 			"reason":            "GRANT",
 			"valid_until":       validUntil,
-			"remaining_seconds": int64(validUntil.Sub(now).Seconds()),
+			"remaining_seconds": remainingSecs,
 		})
 
 		// Notify other parents
-		s.hub.BroadcastToFamily(claims.FamilyID, map[string]interface{}{
-			"type":       "REQUEST_RESOLVED",
-			"request_id": reqID,
-			"status":     "APPROVED",
-			"granted_by": claims.DisplayName,
-			"minutes":    payload.GrantMinutes,
+		s.hub.BroadcastToFamily(familyID, map[string]interface{}{
+			"type":        "REQUEST_RESOLVED",
+			"request_id":  reqID,
+			"status":      "APPROVED",
+			"granted_by":  actorName,
+			"valid_until": validUntil,
 		})
 	} else {
 		s.db.Exec("UPDATE screen_time_requests SET status = 'DENIED', resolved_at = ? WHERE id = ?", now, reqID)
@@ -927,15 +1009,127 @@ func (s *Server) handleResolveRequest(w http.ResponseWriter, r *http.Request) {
 			"access": "LOCKED",
 		})
 
-		s.hub.BroadcastToFamily(claims.FamilyID, map[string]interface{}{
+		s.hub.BroadcastToFamily(familyID, map[string]interface{}{
 			"type":       "REQUEST_RESOLVED",
 			"request_id": reqID,
 			"status":     "DENIED",
-			"denied_by":  claims.DisplayName,
+			"denied_by":  actorName,
 		})
 	}
 
 	jsonResp(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
+func (s *Server) handleSetDeviceGrant(w http.ResponseWriter, r *http.Request) {
+	devID := r.PathValue("id")
+	claims := r.Context().Value(userClaimsKey).(*auth.UserClaims)
+
+	var payload models.SetDeviceGrantRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Verify device belongs to this parent's family
+	var childID string
+	err := s.db.QueryRow(`
+		SELECT d.child_id
+		FROM devices d
+		JOIN child_profiles cp ON d.child_id = cp.id
+		WHERE d.id = ? AND cp.family_id = ?
+	`, devID, claims.FamilyID).Scan(&childID)
+	if err != nil {
+		http.Error(w, `{"error":"device not found"}`, http.StatusNotFound)
+		return
+	}
+
+	now := time.Now().UTC()
+
+	// Expire any existing active grants for this device
+	s.db.Exec("UPDATE time_grants SET valid_until = ? WHERE device_id = ? AND valid_until > ?", now, devID, now)
+
+	if payload.Action == "LOCK" {
+		// Insert an immediate override record so even an active recurring schedule window is locked
+		overrideID := auth.GenerateUUID()
+		s.db.Exec(`
+			INSERT INTO time_grants (id, device_id, granted_by_user_id, valid_from, valid_until, is_override)
+			VALUES (?, ?, ?, ?, ?, 1)
+		`, overrideID, devID, claims.UserID, now, now)
+
+		s.db.Exec("UPDATE screen_time_requests SET status = 'DENIED', resolved_at = ? WHERE device_id = ? AND status = 'PENDING'", now, devID)
+		s.db.Exec("UPDATE devices SET status = 'LOCKED' WHERE id = ?", devID)
+
+		// Signal device to lock immediately (compatible with both existing and updated clients)
+		s.hub.SendToDevice(devID, map[string]interface{}{
+			"type":   "REQUEST_DENIED",
+			"access": "LOCKED",
+		})
+
+		s.hub.BroadcastToFamily(claims.FamilyID, map[string]interface{}{
+			"type":      "DEVICE_GRANT_UPDATED",
+			"device_id": devID,
+			"access":    "LOCKED",
+		})
+
+		jsonResp(w, http.StatusOK, map[string]interface{}{
+			"status": "locked",
+		})
+		return
+	}
+
+	var validUntil time.Time
+	if payload.ValidUntil != nil {
+		validUntil = payload.ValidUntil.UTC()
+	} else if payload.GrantMinutes > 0 {
+		validUntil = now.Add(time.Duration(payload.GrantMinutes) * time.Minute).UTC()
+	} else {
+		http.Error(w, `{"error":"valid_until or grant_minutes is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if !validUntil.After(now) {
+		http.Error(w, `{"error":"end time must be in the future"}`, http.StatusBadRequest)
+		return
+	}
+
+	grantID := auth.GenerateUUID()
+	_, err = s.db.Exec(`
+		INSERT INTO time_grants (id, device_id, granted_by_user_id, valid_from, valid_until, is_override)
+		VALUES (?, ?, ?, ?, ?, 1)
+	`, grantID, devID, claims.UserID, now, validUntil)
+	if err != nil {
+		http.Error(w, `{"error":"failed to save end time"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Also mark any pending screen time request for this device as approved
+	s.db.Exec("UPDATE screen_time_requests SET status = 'APPROVED', resolved_at = ? WHERE device_id = ? AND status = 'PENDING'", now, devID)
+	s.db.Exec("UPDATE devices SET status = 'ACTIVE' WHERE id = ?", devID)
+
+	remainingSecs := int64(validUntil.Sub(now).Seconds())
+
+	// Signal connected device to unlock or update its remaining countdown immediately
+	s.hub.SendToDevice(devID, map[string]interface{}{
+		"type":              "ACCESS_UPDATE",
+		"access":            "ALLOWED",
+		"reason":            "GRANT",
+		"valid_until":       validUntil,
+		"remaining_seconds": remainingSecs,
+	})
+
+	s.hub.BroadcastToFamily(claims.FamilyID, map[string]interface{}{
+		"type":              "DEVICE_GRANT_UPDATED",
+		"device_id":         devID,
+		"access":            "ALLOWED",
+		"valid_until":       validUntil,
+		"remaining_seconds": remainingSecs,
+	})
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"status":            "updated",
+		"valid_until":       validUntil,
+		"remaining_seconds": remainingSecs,
+	})
 }
 
 func (s *Server) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {

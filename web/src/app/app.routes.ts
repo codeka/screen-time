@@ -8,6 +8,13 @@ import { DashboardComponent } from './pages/dashboard/dashboard.component';
 const authGuard = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const customReq = params.get('custom_request');
+    if (customReq) {
+      sessionStorage.setItem('screentime_custom_request', customReq);
+    }
+  }
   if (auth.isLoggedIn()) {
     return true;
   }

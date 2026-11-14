@@ -45,6 +45,9 @@ type Device struct {
 	PairingExpiresAt *time.Time `json:"pairing_expires_at,omitempty"`
 	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
 	Status           string     `json:"status"` // LOCKED, ACTIVE, TAMPERED, OFFLINE
+	ValidUntil       *time.Time `json:"valid_until,omitempty"`
+	RemainingSeconds int64      `json:"remaining_seconds,omitempty"`
+	AccessReason     string     `json:"access_reason,omitempty"` // "GRANT" | "SCHEDULE" | ""
 }
 
 type ScreenTimeRequest struct {
@@ -131,12 +134,18 @@ type PairDeviceResponse struct {
 }
 
 type ResolveScreenTimeRequest struct {
-	Action       string `json:"action"` // "GRANT" | "DENY"
-	GrantMinutes int    `json:"grant_minutes,omitempty"`
+	Action       string     `json:"action"` // "GRANT" | "DENY"
+	GrantMinutes int        `json:"grant_minutes,omitempty"`
+	ValidUntil   *time.Time `json:"valid_until,omitempty"`
+}
+
+type SetDeviceGrantRequest struct {
+	Action       string     `json:"action"` // "SET" | "LOCK"
+	ValidUntil   *time.Time `json:"valid_until,omitempty"`
+	GrantMinutes int        `json:"grant_minutes,omitempty"`
 }
 
 type HeartbeatRequest struct {
 	UptimeSeconds  int64  `json:"uptime_seconds"`
 	ReportedStatus string `json:"reported_status"`
 }
-
