@@ -160,5 +160,9 @@ export class ApiService {
       headers: this.getHeaders()
     });
   }
+
+  getWindowsInstallerUrl(): string {
+    return `${this.baseUrl}/downloads/ScreenTimeSetup.exe`;
+  }
 }
 

@@ -20,20 +20,26 @@ import (
 )
 
 type Server struct {
-	db        *sql.DB
-	hub       *realtime.Hub
-	push      *push.PushManager
-	router    *http.ServeMux
-	staticDir string
+	db           *sql.DB
+	hub          *realtime.Hub
+	push         *push.PushManager
+	router       *http.ServeMux
+	staticDir    string
+	downloadsDir string
 }
 
-func NewServer(db *sql.DB, staticDir string) *Server {
+func NewServer(db *sql.DB, staticDir string, downloadsDir ...string) *Server {
+	dlDir := ""
+	if len(downloadsDir) > 0 {
+		dlDir = downloadsDir[0]
+	}
 	s := &Server{
-		db:        db,
-		hub:       realtime.NewHub(),
-		push:      push.NewPushManager(db),
-		router:    http.NewServeMux(),
-		staticDir: staticDir,
+		db:           db,
+		hub:          realtime.NewHub(),
+		push:         push.NewPushManager(db),
+		router:       http.NewServeMux(),
+		staticDir:    staticDir,
+		downloadsDir: dlDir,
 	}
 	s.routes()
 	s.startWatchdog()
@@ -95,6 +101,10 @@ func (s *Server) routes() {
 	s.router.HandleFunc("/api/ws/admin", s.handleAdminWebSocket)
 	s.router.HandleFunc("/api/ws/device", s.handleDeviceWebSocket)
 
+	// Client Auto-Update & Downloads
+	s.router.HandleFunc("GET /api/updates/windows", s.handleGetWindowsUpdate)
+	s.router.HandleFunc("GET /downloads/ScreenTimeSetup.exe", s.handleDownloadWindowsInstaller)
+
 	// Static SPA (Web Admin)
 	s.router.HandleFunc("/", s.handleStaticSPA)
 }
@@ -129,6 +139,49 @@ func (s *Server) handleStaticSPA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func (s *Server) handleGetWindowsUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.downloadsDir == "" {
+		http.Error(w, `{"error":"updates not configured"}`, http.StatusNotFound)
+		return
+	}
+
+	manifestPath := filepath.Join(s.downloadsDir, "windows-latest.json")
+	installerPath := filepath.Join(s.downloadsDir, "ScreenTimeSetup.exe")
+
+	if _, err := os.Stat(installerPath); err != nil {
+		http.Error(w, `{"error":"windows installer not found"}`, http.StatusNotFound)
+		return
+	}
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		http.Error(w, `{"error":"update manifest not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
+func (s *Server) handleDownloadWindowsInstaller(w http.ResponseWriter, r *http.Request) {
+	if s.downloadsDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	installerPath := filepath.Join(s.downloadsDir, "ScreenTimeSetup.exe")
+	if info, err := os.Stat(installerPath); err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", `attachment; filename="ScreenTimeSetup.exe"`)
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, installerPath)
 }
 
 // Background watchdog checking for missing device heartbeats

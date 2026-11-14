@@ -352,6 +352,12 @@ interface EndTimeModalTarget {
               </ol>
             </div>
 
+            <div class="installer-download-row">
+              <a class="btn-download-installer" [href]="api.getWindowsInstallerUrl()" download>
+                💻 Download Windows Installer (.exe)
+              </a>
+            </div>
+
             <div class="modal-actions center">
               <button class="btn-primary" (click)="activePairingChild.set(null)">Done</button>
             </div>
@@ -976,6 +982,24 @@ interface EndTimeModalTarget {
     }
     .pairing-instructions li {
       margin-bottom: 0.375rem;
+    }
+    .installer-download-row {
+      margin: 0.75rem 0 0.25rem 0;
+    }
+    .btn-download-installer {
+      display: inline-block;
+      background: rgba(99, 102, 241, 0.16);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #c7d2fe;
+      text-decoration: none;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      padding: 0.45rem 0.875rem;
+      border-radius: 0.5rem;
+      transition: background 0.15s;
+    }
+    .btn-download-installer:hover {
+      background: rgba(99, 102, 241, 0.3);
     }
     .form-group {
       margin-bottom: 1rem;

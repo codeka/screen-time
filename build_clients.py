@@ -12,10 +12,14 @@ Outputs are copied to ./releases/:
 """
 
 import argparse
+import datetime
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -71,8 +75,28 @@ def find_java_home() -> str | None:
     return None
 
 
+def get_windows_csproj_version(csproj_path: Path) -> str:
+    tree = ET.parse(csproj_path)
+    root = tree.getroot()
+    for elem in root.iter("Version"):
+        if elem.text and elem.text.strip():
+            return elem.text.strip()
+    return "1.0.0"
+
+
+def compute_sha256(file_path: Path) -> str:
+    h = hashlib.sha256()
+    with file_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def build_windows(repo_root: Path, releases_dir: Path):
     win_dir = repo_root / "client" / "windows"
+    version = get_windows_csproj_version(win_dir / "ScreenTimeClient.csproj")
+    print(f"[+] Building Windows client v{version}")
+
     publish_name = "publish"
     publish_dir = win_dir / publish_name
     if publish_dir.exists():
@@ -87,21 +111,40 @@ def build_windows(repo_root: Path, releases_dir: Path):
     run_cmd(
         ["dotnet", "publish", "-c", "Release", "-r", "win-x64", "--self-contained", "-o", str(publish_dir)],
         cwd=win_dir,
-        description="Publishing self-contained Windows client",
+        description=f"Publishing self-contained Windows client v{version}",
     )
 
     iscc = find_iscc()
     run_cmd(
-        [iscc, f"/DPublishDir={publish_name}", str(win_dir / "installer.iss")],
+        [
+            iscc,
+            f"/DPublishDir={publish_name}",
+            f"/DMyAppVersion={version}",
+            str(win_dir / "installer.iss"),
+        ],
         cwd=win_dir,
-        description="Compiling Inno Setup Windows installer",
+        description=f"Compiling Inno Setup Windows installer v{version}",
     )
 
     built_setup = win_dir / "installer_output" / "ScreenTimeSetup.exe"
     dest = releases_dir / "ScreenTimeSetup.exe"
     shutil.copy2(built_setup, dest)
-    size_mb = dest.stat().st_size / (1024 * 1024)
-    print(f"[+] Windows installer ready: {dest} ({size_mb:.1f} MB)")
+
+    sha256_hex = compute_sha256(dest)
+    size_bytes = dest.stat().st_size
+    manifest = {
+        "version": version,
+        "sha256": sha256_hex,
+        "url": "/downloads/ScreenTimeSetup.exe",
+        "size_bytes": size_bytes,
+        "published_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    manifest_path = releases_dir / "windows-latest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    size_mb = size_bytes / (1024 * 1024)
+    print(f"[+] Windows installer ready: {dest} ({size_mb:.1f} MB, sha256={sha256_hex[:16]}...)")
+    print(f"[+] Windows update manifest written: {manifest_path}")
 
 
 def build_android(repo_root: Path, releases_dir: Path):

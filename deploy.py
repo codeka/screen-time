@@ -3,13 +3,16 @@
 
 Usage:
     python deploy.py --server=USER@HOST
+    python deploy.py --server=USER@HOST --build-windows
+    python deploy.py --server=USER@HOST --skip-windows
 
 The script will:
-  1. Build the Go server binary.
-  2. Build the Angular web UI (npm run build).
-  3. Package the binary, the built web assets, and optional
-     documentation files into a zip archive.
-  4. Copy the zip archive to `/home/USER/` on the remote server via `scp`.
+  1. Optionally rebuild the Windows installer + update manifest (--build-windows).
+  2. Build the Go server binary (Linux amd64).
+  3. Build the Angular web UI (npm run build).
+  4. Package the binary, built web assets, and Windows auto-update files
+     (ScreenTimeSetup.exe + windows-latest.json, unless --skip-windows) into a zip archive.
+  5. Copy the zip archive to `/home/USER/` on the remote server via `scp`.
 
 Prerequisites:
   * Go toolchain in PATH (`go build`).
@@ -55,11 +58,29 @@ def main():
         required=True,
         help="Remote SSH destination in the form user@host (e.g., web@screentime.codeka.com)",
     )
+    parser.add_argument(
+        "--build-windows",
+        action="store_true",
+        help="Rebuild the Windows client installer and windows-latest.json before packaging",
+    )
+    parser.add_argument(
+        "--skip-windows",
+        action="store_true",
+        help="Omit ScreenTimeSetup.exe and windows-latest.json from the deployment archive",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent
     server_dir = repo_root / "server"
     web_dir = repo_root / "web"
+    releases_dir = repo_root / "releases"
+
+    if args.build_windows:
+        run_cmd(
+            [sys.executable, str(repo_root / "build_clients.py"), "--windows"],
+            cwd=repo_root,
+            description="Building Windows installer and update manifest",
+        )
 
     # 1. Build Go server binary
     binary_path = server_dir / "screentime-server"
@@ -92,6 +113,18 @@ def main():
         shutil.copy2(binary_path, pkg_root / binary_path.name)
         # Copy web assets
         shutil.copytree(build_output, pkg_root / "web")
+        # Copy Windows installer + auto-update manifest if available and not skipped
+        if not args.skip_windows:
+            setup_exe = releases_dir / "ScreenTimeSetup.exe"
+            manifest_json = releases_dir / "windows-latest.json"
+            if setup_exe.is_file() and manifest_json.is_file():
+                dl_dir = pkg_root / "downloads"
+                dl_dir.mkdir(exist_ok=True)
+                shutil.copy2(setup_exe, dl_dir / "ScreenTimeSetup.exe")
+                shutil.copy2(manifest_json, dl_dir / "windows-latest.json")
+                print("[+] Bundled Windows auto-update package into downloads/")
+            else:
+                print("[!] Note: releases/ScreenTimeSetup.exe or windows-latest.json not found; skipping downloads/ bundle (pass --build-windows to build it).")
         # Optionally include README and LICENSE if they exist
         for extra in ["README.md", "LICENSE"]:
             src = repo_root / extra

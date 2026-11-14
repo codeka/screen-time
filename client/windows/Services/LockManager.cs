@@ -25,6 +25,7 @@ namespace ScreenTimeClient.Services
 
         public bool IsLocked { get; private set; } = true;
         public event Action? OnDeregistered;
+        public event Action? OnLocked;
         private bool _isStopped = false;
         private long _remainingSeconds = 0;
         private bool _warned5Min = false;
@@ -158,6 +159,8 @@ namespace ScreenTimeClient.Services
 
                 // Install low-level keyboard hook
                 Win32.InstallKeyboardHook();
+
+                OnLocked?.Invoke();
             });
         }
 

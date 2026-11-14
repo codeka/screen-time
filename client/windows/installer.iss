@@ -2,7 +2,9 @@
 ; Builds a traditional Windows .exe installer
 
 #define MyAppName "Screen Time"
-#define MyAppVersion "1.0.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "Codeka"
 #define MyAppURL "https://screentime.codeka.com"
 #define MyAppExeName "ScreenTimeClient.exe"
@@ -58,9 +60,28 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
-; Launch after install
+; Launch after interactive install
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; Automatically relaunch after a silent auto-update (/VERYSILENT /RELAUNCH=1)
+Filename: "{app}\{#MyAppExeName}"; Parameters: "{code:GetRelaunchParams}"; Flags: nowait skipifnotsilent; Check: ShouldRelaunch
 
 [UninstallDelete]
 ; Clean up the local config on uninstall
 Type: filesandordirs; Name: "{localappdata}\ScreenTime"
+
+[Code]
+function ShouldRelaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
+function GetRelaunchParams(Param: String): String;
+var
+  ServerUrl: String;
+begin
+  ServerUrl := ExpandConstant('{param:SERVERURL|}');
+  if ServerUrl <> '' then
+    Result := '--server=' + ServerUrl
+  else
+    Result := '';
+end;

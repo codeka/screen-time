@@ -356,3 +356,60 @@ func TestCompleteWorkflow(t *testing.T) {
 	}
 }
 
+func TestWindowsAutoUpdateEndpoints(t *testing.T) {
+	tmpDB := "test_updates_" + time.Now().Format("150405.000") + ".db"
+	database, err := db.InitDB(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer func() {
+		database.Close()
+		os.Remove(tmpDB)
+		os.Remove(tmpDB + "-wal")
+		os.Remove(tmpDB + "-shm")
+	}()
+
+	dlDir, err := os.MkdirTemp("", "screentime_dl_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp downloads dir: %v", err)
+	}
+	defer os.RemoveAll(dlDir)
+
+	server := api.NewServer(database, "", dlDir)
+
+	// Before files exist -> 404
+	req := httptest.NewRequest("GET", "/api/updates/windows", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("Expected 404 when no update package exists, got %d", w.Code)
+	}
+
+	// Write dummy installer and manifest
+	dummyBytes := []byte("MZ-dummy-installer-payload")
+	os.WriteFile(dlDir+"/ScreenTimeSetup.exe", dummyBytes, 0644)
+	manifestJSON := `{"version":"1.2.3","sha256":"abc123def456","url":"/downloads/ScreenTimeSetup.exe","size_bytes":26}`
+	os.WriteFile(dlDir+"/windows-latest.json", []byte(manifestJSON), 0644)
+
+	// GET /api/updates/windows -> 200 OK with manifest
+	req = httptest.NewRequest("GET", "/api/updates/windows", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for windows update manifest, got %d: %s", w.Code, w.Body.String())
+	}
+	var gotManifest map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&gotManifest)
+	if gotManifest["version"] != "1.2.3" {
+		t.Fatalf("Expected version 1.2.3, got %v", gotManifest["version"])
+	}
+
+	// GET /downloads/ScreenTimeSetup.exe -> 200 OK with binary payload
+	req = httptest.NewRequest("GET", "/downloads/ScreenTimeSetup.exe", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), dummyBytes) {
+		t.Fatalf("Expected 200 OK with exact installer bytes, got %d (%d bytes)", w.Code, w.Body.Len())
+	}
+}
+
