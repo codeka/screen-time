@@ -182,6 +182,18 @@ namespace ScreenTimeClient.Services
 
                 // Start local countdown
                 _countdownTimer.Start();
+
+                if (_remainingSeconds <= 300 && _remainingSeconds > 290)
+                {
+                    _warned5Min = true;
+                    ShowNotificationToast("Screen Time: 5 Minutes Remaining", "Your screen time will expire in 5 minutes.");
+                }
+                else if (_remainingSeconds <= 60 && _remainingSeconds > 50)
+                {
+                    _warned5Min = true;
+                    _warned1Min = true;
+                    ShowNotificationToast("Screen Time: 1 Minute Remaining", "Please finish up what you are doing. The screen will lock shortly.");
+                }
             });
         }
 

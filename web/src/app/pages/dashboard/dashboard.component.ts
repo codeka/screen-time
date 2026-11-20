@@ -18,6 +18,12 @@ interface EndTimeModalTarget {
   currentValidUntil?: string;
 }
 
+interface LockDeviceModalTarget {
+  deviceId: string;
+  childName: string;
+  deviceName: string;
+}
+
 @Component({
   selector: 'app-dashboard',
   standalone: true,
@@ -176,9 +182,9 @@ interface EndTimeModalTarget {
                               <button
                                 class="btn-device-lock"
                                 [disabled]="lockingDeviceId() === dev.id"
-                                (click)="forceLockDevice(dev)"
-                                title="Force this device to lock immediately">
-                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock Now' }}
+                                (click)="openLockDeviceModal(child, dev)"
+                                title="Lock this device">
+                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock device' }}
                               </button>
                             } @else {
                               <span class="device-badge" [ngClass]="dev.status === 'OFFLINE' ? 'offline' : 'locked'">
@@ -190,9 +196,9 @@ interface EndTimeModalTarget {
                               <button
                                 class="btn-device-lock"
                                 [disabled]="lockingDeviceId() === dev.id"
-                                (click)="forceLockDevice(dev)"
-                                title="Force this device to lock immediately">
-                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock Now' }}
+                                (click)="openLockDeviceModal(child, dev)"
+                                title="Lock this device">
+                                {{ lockingDeviceId() === dev.id ? 'Locking…' : '🔒 Lock device' }}
                               </button>
                             }
                           </div>
@@ -287,9 +293,9 @@ interface EndTimeModalTarget {
                 <button
                   type="button"
                   class="btn-deny"
-                  [disabled]="savingEndTime()"
-                  (click)="lockDeviceNow()">
-                  🔒 Lock Now
+                  [disabled]="savingEndTime() || !!lockingDeviceId()"
+                  (click)="openLockFromEditModal()">
+                  🔒 Lock device
                 </button>
               }
               <div class="modal-actions-right">
@@ -449,6 +455,76 @@ interface EndTimeModalTarget {
               </button>
               <button class="btn-deny" [disabled]="deletingChild()" (click)="confirmDeleteChild()">
                 {{ deletingChild() ? 'Removing…' : '🗑️ Remove Child' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Lock Device Confirmation Modal -->
+      @if (lockModal(); as lockTarget) {
+        <div class="modal-backdrop" (click)="closeLockDeviceModal()">
+          <div class="modal-card" (click)="$event.stopPropagation()">
+            <div class="modal-header-between">
+              <div>
+                <h3>Lock device?</h3>
+                <p class="modal-subtitle">
+                  <strong>{{ lockTarget.childName }}</strong> · {{ lockTarget.deviceName }}
+                </p>
+              </div>
+              <button class="btn-close" [disabled]="!!lockingDeviceId()" (click)="closeLockDeviceModal()">✕</button>
+            </div>
+
+            <div class="lock-options-group" role="radiogroup" aria-label="Lock device options">
+              <label class="lock-option-card" [class.selected]="lockOption() === 'NOW'">
+                <input
+                  type="radio"
+                  name="lockTimingOption"
+                  value="NOW"
+                  [checked]="lockOption() === 'NOW'"
+                  [disabled]="!!lockingDeviceId()"
+                  (change)="lockOption.set('NOW')" />
+                <div class="lock-option-body">
+                  <div class="lock-option-title">Lock now</div>
+                  <div class="lock-option-desc">Lock the device immediately.</div>
+                </div>
+              </label>
+
+              <label class="lock-option-card" [class.selected]="lockOption() === 'FIVE_MINUTES'">
+                <input
+                  type="radio"
+                  name="lockTimingOption"
+                  value="FIVE_MINUTES"
+                  [checked]="lockOption() === 'FIVE_MINUTES'"
+                  [disabled]="!!lockingDeviceId()"
+                  (change)="lockOption.set('FIVE_MINUTES')" />
+                <div class="lock-option-body">
+                  <div class="lock-option-title">Lock in 5 minutes</div>
+                  <div class="lock-option-desc">
+                    Pop up the 5-minute warning immediately (with option to request more time) and lock 5 minutes later.
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            @if (lockError()) {
+              <div class="inline-error">{{ lockError() }}</div>
+            }
+
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="btn-secondary"
+                [disabled]="!!lockingDeviceId()"
+                (click)="closeLockDeviceModal()">
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="btn-deny btn-modal-confirm"
+                [disabled]="!!lockingDeviceId()"
+                (click)="confirmLockDevice()">
+                {{ lockingDeviceId() ? 'Locking…' : '🔒 Lock device' }}
               </button>
             </div>
           </div>
@@ -1191,6 +1267,62 @@ interface EndTimeModalTarget {
       opacity: 0.6;
       cursor: not-allowed;
     }
+    .btn-deny:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    /* Lock device confirmation options */
+    .lock-options-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.625rem;
+      margin-bottom: 1rem;
+    }
+    .lock-option-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem 0.875rem;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 0.625rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .lock-option-card:hover {
+      border-color: #475569;
+    }
+    .lock-option-card.selected {
+      border-color: #6366f1;
+      background: rgba(99, 102, 241, 0.12);
+    }
+    .lock-option-card input[type="radio"] {
+      margin-top: 0.2rem;
+      accent-color: #6366f1;
+      flex-shrink: 0;
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+    }
+    .lock-option-body {
+      min-width: 0;
+    }
+    .lock-option-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+    .lock-option-desc {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      margin-top: 0.2rem;
+      line-height: 1.4;
+    }
+    .btn-modal-confirm {
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.8125rem;
+    }
     /* Schedule matrix */
     .schedule-matrix {
       display: flex;
@@ -1437,6 +1569,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   lockingDeviceId = signal<string | null>(null);
   endTimeError = signal<string>('');
   upcomingHourPresets = signal<{ label: string; value: string }[]>([]);
+
+  // Lock device confirmation modal state
+  lockModal = signal<LockDeviceModalTarget | null>(null);
+  lockOption = signal<'NOW' | 'FIVE_MINUTES'>('NOW');
+  lockError = signal<string>('');
 
   // Add / Remove child modal state
   showAddChildModal = signal<boolean>(false);
@@ -1785,37 +1922,58 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  forceLockDevice(dev: Device) {
-    this.lockingDeviceId.set(dev.id);
-    this.api.setDeviceGrant(dev.id, 'LOCK').subscribe({
-      next: () => {
-        this.lockingDeviceId.set(null);
-        this.refreshPendingRequests();
-        this.refreshChildren();
-      },
-      error: (err) => {
-        this.lockingDeviceId.set(null);
-        alert('Failed to lock device: ' + (err.error?.error || err.message));
-      }
+  openLockDeviceModal(child: ChildProfile, dev: Device) {
+    this.lockOption.set('NOW');
+    this.lockError.set('');
+    this.lockModal.set({
+      deviceId: dev.id,
+      childName: child.display_name,
+      deviceName: dev.device_name
     });
   }
 
-  lockDeviceNow() {
+  openLockFromEditModal() {
     const targetModal = this.endTimeModal();
     if (!targetModal) return;
 
-    this.savingEndTime.set(true);
-    this.endTimeError.set('');
-    this.api.setDeviceGrant(targetModal.deviceId, 'LOCK').subscribe({
+    this.endTimeModal.set(null);
+    this.lockOption.set('NOW');
+    this.lockError.set('');
+    this.lockModal.set({
+      deviceId: targetModal.deviceId,
+      childName: targetModal.childName,
+      deviceName: targetModal.deviceName
+    });
+  }
+
+  closeLockDeviceModal() {
+    if (this.lockingDeviceId()) return;
+    this.lockModal.set(null);
+    this.lockError.set('');
+  }
+
+  confirmLockDevice() {
+    const target = this.lockModal();
+    if (!target || this.lockingDeviceId()) return;
+
+    this.lockingDeviceId.set(target.deviceId);
+    this.lockError.set('');
+
+    const req$ =
+      this.lockOption() === 'FIVE_MINUTES'
+        ? this.api.setDeviceGrant(target.deviceId, 'SET', undefined, 5)
+        : this.api.setDeviceGrant(target.deviceId, 'LOCK');
+
+    req$.subscribe({
       next: () => {
-        this.savingEndTime.set(false);
-        this.endTimeModal.set(null);
+        this.lockingDeviceId.set(null);
+        this.lockModal.set(null);
         this.refreshPendingRequests();
         this.refreshChildren();
       },
       error: (err) => {
-        this.savingEndTime.set(false);
-        this.endTimeError.set(err.error?.error || 'Failed to lock device.');
+        this.lockingDeviceId.set(null);
+        this.lockError.set(err.error?.error || 'Failed to lock device.');
       }
     });
   }

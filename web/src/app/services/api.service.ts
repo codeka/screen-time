@@ -141,11 +141,19 @@ export class ApiService {
   setDeviceGrant(
     deviceId: string,
     action: 'SET' | 'LOCK',
-    validUntil?: string
+    validUntil?: string,
+    grantMinutes?: number
   ): Observable<{ status: string; valid_until?: string; remaining_seconds?: number }> {
+    const body: { action: 'SET' | 'LOCK'; valid_until?: string; grant_minutes?: number } = { action };
+    if (validUntil) {
+      body.valid_until = validUntil;
+    }
+    if (grantMinutes !== undefined) {
+      body.grant_minutes = grantMinutes;
+    }
     return this.http.put<{ status: string; valid_until?: string; remaining_seconds?: number }>(
       `${this.baseUrl}/api/devices/${deviceId}/grant`,
-      { action, valid_until: validUntil },
+      body,
       { headers: this.getHeaders() }
     );
   }

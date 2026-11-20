@@ -212,12 +212,8 @@ class ScreenTimeService : Service() {
     }
 
     private fun unlock(seconds: Long) {
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .cancel(WARNING_NOTIFICATION_ID)
         isLocked = false
         remainingSeconds = if (seconds > 0) seconds else 1800L
-        warned5Min = false
-        warned1Min = false
 
         if (overlayView != null) {
             try {
@@ -226,6 +222,39 @@ class ScreenTimeService : Service() {
                 e.printStackTrace()
             }
             overlayView = null
+        }
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        when {
+            remainingSeconds > 300 -> {
+                manager.cancel(WARNING_NOTIFICATION_ID)
+                warned5Min = false
+                warned1Min = false
+            }
+            remainingSeconds in 291..300 -> {
+                warned5Min = true
+                warned1Min = false
+                sendWarningNotification(
+                    "Screen Time: 5 Minutes Remaining",
+                    "Your screen time expires in 5 minutes."
+                )
+            }
+            remainingSeconds in 61..290 -> {
+                warned5Min = true
+                warned1Min = false
+            }
+            remainingSeconds in 51..60 -> {
+                warned5Min = true
+                warned1Min = true
+                sendWarningNotification(
+                    "Screen Time: 1 Minute Remaining",
+                    "The screen will lock shortly."
+                )
+            }
+            else -> {
+                warned5Min = true
+                warned1Min = true
+            }
         }
     }
 

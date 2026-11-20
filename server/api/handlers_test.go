@@ -679,3 +679,190 @@ func TestStaticManifestAndNoCacheHeaders(t *testing.T) {
 	}
 }
 
+func TestLockInFiveMinutesWorkflow(t *testing.T) {
+	server, database, cleanup := setupTestServerWithDB(t)
+	defer cleanup()
+
+	// 1. Register family & parent, create child, pair device
+	regPayload := `{"family_name":"The Millers","display_name":"Dad","email":"dad5m@example.com","password":"secretpassword123"}`
+	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBufferString(regPayload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Register failed: %d %s", w.Code, w.Body.String())
+	}
+	var authResp models.AuthResponse
+	json.NewDecoder(w.Body).Decode(&authResp)
+	parentToken := authResp.Token
+
+	req = httptest.NewRequest("POST", "/api/children", bytes.NewBufferString(`{"display_name":"Lucas","emergency_contact":""}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Create child failed: %d %s", w.Code, w.Body.String())
+	}
+	var childResp map[string]string
+	json.NewDecoder(w.Body).Decode(&childResp)
+	childID := childResp["id"]
+
+	req = httptest.NewRequest("POST", "/api/children/"+childID+"/pairing-code", nil)
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Generate pairing code failed: %d %s", w.Code, w.Body.String())
+	}
+	var codeResp models.GeneratePairingCodeResponse
+	json.NewDecoder(w.Body).Decode(&codeResp)
+
+	pairBody, _ := json.Marshal(models.PairDeviceRequest{
+		PairingCode: codeResp.PairingCode,
+		Platform:    "WINDOWS",
+		DeviceName:  "Lucas PC",
+	})
+	req = httptest.NewRequest("POST", "/api/devices/pair", bytes.NewReader(pairBody))
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Pair device failed: %d %s", w.Code, w.Body.String())
+	}
+	var pairResp models.PairDeviceResponse
+	json.NewDecoder(w.Body).Decode(&pairResp)
+	deviceID := pairResp.DeviceID
+	deviceToken := pairResp.AuthToken
+
+	// 2. Grant 60 minutes first, then choose "Lock in 5 minutes" (grant_minutes: 5)
+	req = httptest.NewRequest("PUT", "/api/devices/"+deviceID+"/grant", bytes.NewBufferString(`{"action":"SET","grant_minutes":60}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Initial 60m grant failed: %d %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("PUT", "/api/devices/"+deviceID+"/grant", bytes.NewBufferString(`{"action":"SET","grant_minutes":5}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Lock in 5 minutes grant failed: %d %s", w.Code, w.Body.String())
+	}
+	var setResp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&setResp)
+	if remFloat, ok := setResp["remaining_seconds"].(float64); !ok || remFloat < 295 || remFloat > 300 {
+		t.Fatalf("Expected PUT response remaining_seconds in 295..300, got %v", setResp["remaining_seconds"])
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var accessResp models.AccessStatusResponse
+	json.NewDecoder(w.Body).Decode(&accessResp)
+	if accessResp.Access != "ALLOWED" || accessResp.Reason != "GRANT" || accessResp.RemainingSeconds < 295 || accessResp.RemainingSeconds > 300 {
+		t.Fatalf("Expected ALLOWED/GRANT with remaining_seconds in 295..300, got %+v", accessResp)
+	}
+
+	// 3. While in the 5-minute window, child requests more time and parent approves +15m (stacks onto ~5m -> ~20m)
+	req = httptest.NewRequest("POST", "/api/requests", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Request more time during 5m warning failed: %d %s", w.Code, w.Body.String())
+	}
+	var reqResp map[string]string
+	json.NewDecoder(w.Body).Decode(&reqResp)
+	requestID := reqResp["request_id"]
+
+	req = httptest.NewRequest("POST", "/api/requests/"+requestID+"/resolve", bytes.NewBufferString(`{"action":"GRANT","grant_minutes":15}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Approve +15m request failed: %d %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	json.NewDecoder(w.Body).Decode(&accessResp)
+	if accessResp.Access != "ALLOWED" || accessResp.RemainingSeconds < 1180 || accessResp.RemainingSeconds > 1205 {
+		t.Fatalf("Expected stacked remaining seconds ~1200s (5m + 15m), got %+v", accessResp)
+	}
+
+	// 4. Configure an active recurring unrestricted schedule for today and verify a 5m override lock expires into LOCKED
+	nowLocal := time.Now()
+	startTime := "00:00"
+	endTime := "23:59"
+	if nowLocal.Hour() == 23 {
+		startTime = "22:00"
+		endTime = "01:00"
+	}
+	schedBody, _ := json.Marshal(models.ScheduleRule{
+		DayOfWeek: int(nowLocal.Weekday()),
+		StartTime: startTime,
+		EndTime:   endTime,
+		Timezone:  "Local",
+		Enabled:   true,
+	})
+	req = httptest.NewRequest("POST", "/api/children/"+childID+"/schedules", bytes.NewReader(schedBody))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Save active schedule failed: %d %s", w.Code, w.Body.String())
+	}
+
+	// Expire any earlier grants so schedule is active first
+	past := time.Now().UTC().Add(-10 * time.Minute)
+	if _, err := database.Exec("DELETE FROM time_grants WHERE device_id = ?", deviceID); err != nil {
+		t.Fatalf("Clear grants failed: %v", err)
+	}
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	json.NewDecoder(w.Body).Decode(&accessResp)
+	if accessResp.Access != "ALLOWED" || accessResp.Reason != "SCHEDULE" {
+		t.Fatalf("Expected ALLOWED via SCHEDULE before override, got %+v", accessResp)
+	}
+
+	// Parent sets "Lock in 5 minutes" during the active schedule window
+	req = httptest.NewRequest("PUT", "/api/devices/"+deviceID+"/grant", bytes.NewBufferString(`{"action":"SET","grant_minutes":5}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Lock in 5 minutes during schedule failed: %d %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	json.NewDecoder(w.Body).Decode(&accessResp)
+	if accessResp.Access != "ALLOWED" || accessResp.Reason != "GRANT" || accessResp.RemainingSeconds < 295 || accessResp.RemainingSeconds > 300 {
+		t.Fatalf("Expected override GRANT during schedule with ~300s remaining, got %+v", accessResp)
+	}
+
+	// Simulate 5 minutes passing so the override grant expires -> device must LOCK instead of reverting to SCHEDULE
+	_ = past
+	expiredAt := time.Now().UTC().Add(-1 * time.Second)
+	if _, err := database.Exec("UPDATE time_grants SET valid_until = ? WHERE device_id = ? AND is_override = 1", expiredAt, deviceID); err != nil {
+		t.Fatalf("Expire override grant failed: %v", err)
+	}
+
+	req = httptest.NewRequest("GET", "/api/devices/access-status", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	json.NewDecoder(w.Body).Decode(&accessResp)
+	if accessResp.Access != "LOCKED" {
+		t.Fatalf("Expected LOCKED after 5-minute override expired during active schedule, got %+v", accessResp)
+	}
+}
+
