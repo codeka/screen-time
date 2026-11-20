@@ -123,15 +123,17 @@ import { PwaInstallService } from '../../services/pwa-install.service';
   styles: [`
     .auth-container {
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 1.5rem;
+      padding: calc(1.25rem + env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) calc(1.25rem + env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
       background: radial-gradient(circle at top, #1e1b4b, #0f172a);
     }
     .auth-card {
       width: 100%;
       max-width: 420px;
+      min-width: 0;
       background: rgba(30, 41, 59, 0.85);
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -255,6 +257,27 @@ import { PwaInstallService } from '../../services/pwa-install.service';
     }
     .btn-install-app:hover {
       background: rgba(99, 102, 241, 0.3);
+    }
+    @media (max-width: 480px) {
+      .auth-card {
+        padding: 1.5rem 1.25rem;
+        border-radius: 1rem;
+      }
+      .app-icon-img {
+        width: 60px;
+        height: 60px;
+      }
+      h1 {
+        font-size: 1.35rem;
+      }
+      .tabs button {
+        padding: 0.5rem 0.375rem;
+        font-size: 0.8125rem;
+        white-space: nowrap;
+      }
+      input {
+        font-size: 1rem;
+      }
     }
   `]
 })

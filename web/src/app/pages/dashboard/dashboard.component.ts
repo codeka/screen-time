@@ -28,7 +28,7 @@ interface EndTimeModalTarget {
       <header class="navbar">
         <div class="nav-left">
           <img src="/icons/icon-192.png" alt="Screen Time" class="logo-badge-img" />
-          <div>
+          <div class="nav-brand-text">
             <h2 class="family-title">{{ auth.familyName() || 'Family Portal' }}</h2>
             <div class="user-subtitle">Logged in as {{ auth.currentUser()?.display_name }} (Parent)</div>
           </div>
@@ -150,7 +150,7 @@ interface EndTimeModalTarget {
                             <span class="platform-icon">
                               {{ dev.platform === 'WINDOWS' ? '💻' : '📱' }}
                             </span>
-                            <div>
+                            <div class="device-details">
                               <div>
                                 <span class="device-name">{{ dev.device_name }}</span>
                                 <span class="device-platform">({{ dev.platform }})</span>
@@ -282,18 +282,16 @@ interface EndTimeModalTarget {
               <div class="inline-error">{{ endTimeError() }}</div>
             }
 
-            <div class="modal-actions-split">
-              <div>
-                @if (target.mode === 'EDIT_ACTIVE') {
-                  <button
-                    type="button"
-                    class="btn-deny"
-                    [disabled]="savingEndTime()"
-                    (click)="lockDeviceNow()">
-                    🔒 Lock Now
-                  </button>
-                }
-              </div>
+            <div class="modal-actions-split" [class.single-group]="target.mode !== 'EDIT_ACTIVE'">
+              @if (target.mode === 'EDIT_ACTIVE') {
+                <button
+                  type="button"
+                  class="btn-deny"
+                  [disabled]="savingEndTime()"
+                  (click)="lockDeviceNow()">
+                  🔒 Lock Now
+                </button>
+              }
               <div class="modal-actions-right">
                 <button type="button" class="btn-secondary" (click)="endTimeModal.set(null)">Cancel</button>
                 <button
@@ -345,7 +343,7 @@ interface EndTimeModalTarget {
               Install the app on Windows or Android and enter this pairing code:
             </p>
 
-            <div class="pairing-code-box">
+            <div class="pairing-code-box" [class.generating]="!currentPairingCode()">
               {{ currentPairingCode() || 'Generating...' }}
             </div>
 
@@ -400,17 +398,21 @@ interface EndTimeModalTarget {
                   </div>
 
                   <div class="time-col" [class.disabled]="!scheduleState[day.index].enabled">
-                    <label>From</label>
-                    <input 
-                      type="time" 
-                      [(ngModel)]="scheduleState[day.index].start_time" 
-                      [disabled]="!scheduleState[day.index].enabled" />
-                    
-                    <label>To</label>
-                    <input 
-                      type="time" 
-                      [(ngModel)]="scheduleState[day.index].end_time" 
-                      [disabled]="!scheduleState[day.index].enabled" />
+                    <div class="time-field">
+                      <label>From</label>
+                      <input
+                        type="time"
+                        [(ngModel)]="scheduleState[day.index].start_time"
+                        [disabled]="!scheduleState[day.index].enabled" />
+                    </div>
+
+                    <div class="time-field">
+                      <label>To</label>
+                      <input
+                        type="time"
+                        [(ngModel)]="scheduleState[day.index].end_time"
+                        [disabled]="!scheduleState[day.index].enabled" />
+                    </div>
                   </div>
                 </div>
               }
@@ -464,7 +466,9 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 1rem 1.5rem;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      padding: calc(1rem + env(safe-area-inset-top, 0px)) max(1.5rem, env(safe-area-inset-right, 0px)) 1rem max(1.5rem, env(safe-area-inset-left, 0px));
       background: #1e293b;
       border-bottom: 1px solid #334155;
     }
@@ -472,6 +476,10 @@ interface EndTimeModalTarget {
       display: flex;
       align-items: center;
       gap: 0.75rem;
+      min-width: 0;
+    }
+    .nav-brand-text {
+      min-width: 0;
     }
     .logo-badge-img {
       width: 38px;
@@ -484,15 +492,18 @@ interface EndTimeModalTarget {
       font-size: 1.125rem;
       font-weight: 700;
       margin: 0;
+      overflow-wrap: anywhere;
     }
     .user-subtitle {
       font-size: 0.75rem;
       color: #94a3b8;
+      overflow-wrap: anywhere;
     }
     .nav-right {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
     }
     .status-pill {
       display: flex;
@@ -504,6 +515,8 @@ interface EndTimeModalTarget {
       border-radius: 9999px;
       background: rgba(239, 68, 68, 0.2);
       color: #fca5a5;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .status-pill.connected {
       background: rgba(34, 197, 94, 0.2);
@@ -524,6 +537,8 @@ interface EndTimeModalTarget {
       font-size: 0.75rem;
       font-weight: 600;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn-install:hover {
       background: rgba(99, 102, 241, 0.35);
@@ -537,6 +552,8 @@ interface EndTimeModalTarget {
       font-size: 0.75rem;
       font-weight: 600;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn-logout {
       background: transparent;
@@ -546,11 +563,13 @@ interface EndTimeModalTarget {
       border-radius: 0.5rem;
       font-size: 0.75rem;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .main-content {
       max-width: 1100px;
       margin: 0 auto;
-      padding: 1.5rem;
+      padding: 1.5rem max(1.5rem, env(safe-area-inset-right, 0px)) calc(1.5rem + env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px));
     }
     .requests-section {
       background: rgba(245, 158, 11, 0.1);
@@ -576,18 +595,24 @@ interface EndTimeModalTarget {
       display: grid;
       gap: 1rem;
       margin-top: 1rem;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
     }
     .request-card {
       background: #1e293b;
       border: 1px solid #334155;
       border-radius: 0.75rem;
       padding: 1rem;
+      min-width: 0;
     }
     .request-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      gap: 0.5rem;
+    }
+    .request-header > div {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .request-child-name {
       font-size: 1.125rem;
@@ -606,6 +631,8 @@ interface EndTimeModalTarget {
       padding: 0.2rem 0.5rem;
       border-radius: 0.375rem;
       text-transform: uppercase;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
     .request-msg {
       font-size: 0.875rem;
@@ -627,6 +654,7 @@ interface EndTimeModalTarget {
       font-weight: 600;
       cursor: pointer;
       transition: background 0.15s;
+      white-space: nowrap;
     }
     .btn-grant:hover {
       background: #475569;
@@ -652,6 +680,7 @@ interface EndTimeModalTarget {
       font-size: 0.8125rem;
       font-weight: 600;
       cursor: pointer;
+      white-space: nowrap;
     }
     .btn-deny:hover:not(:disabled) {
       background: rgba(239, 68, 68, 0.32);
@@ -660,7 +689,12 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 0.75rem;
       margin-bottom: 1.25rem;
+    }
+    .section-header > div {
+      min-width: 0;
     }
     .btn-primary-sm {
       background: #4f46e5;
@@ -671,23 +705,32 @@ interface EndTimeModalTarget {
       font-size: 0.8125rem;
       font-weight: 600;
       cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .children-grid {
       display: grid;
       gap: 1.25rem;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
     }
     .child-card {
       background: #1e293b;
       border: 1px solid #334155;
       border-radius: 1rem;
       padding: 1.25rem;
+      min-width: 0;
     }
     .child-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.75rem;
       margin-bottom: 1rem;
+    }
+    .child-header > div:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .child-name {
       font-size: 1.25rem;
@@ -714,6 +757,7 @@ interface EndTimeModalTarget {
       font-size: 0.75rem;
       font-weight: 600;
       cursor: pointer;
+      white-space: nowrap;
     }
     .btn-icon:hover {
       background: #475569;
@@ -747,8 +791,9 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 0;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.75rem;
+      padding: 0.625rem 0;
       border-bottom: 1px solid #1e293b;
     }
     .device-row:last-child {
@@ -758,10 +803,16 @@ interface EndTimeModalTarget {
       display: flex;
       align-items: flex-start;
       gap: 0.5rem;
+      flex: 1 1 180px;
       min-width: 0;
     }
     .platform-icon {
       margin-top: 0.1rem;
+      flex-shrink: 0;
+    }
+    .device-details {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .device-name {
       font-size: 0.8125rem;
@@ -790,9 +841,9 @@ interface EndTimeModalTarget {
     }
     .device-right-actions {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 0.4rem;
-      flex-shrink: 0;
     }
     .btn-device-edit {
       background: rgba(99, 102, 241, 0.2);
@@ -804,6 +855,8 @@ interface EndTimeModalTarget {
       border-radius: 0.375rem;
       cursor: pointer;
       transition: background 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn-device-edit:hover {
       background: rgba(99, 102, 241, 0.35);
@@ -818,6 +871,8 @@ interface EndTimeModalTarget {
       border-radius: 0.375rem;
       cursor: pointer;
       transition: background 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn-device-unlock:hover {
       background: #334155;
@@ -832,6 +887,8 @@ interface EndTimeModalTarget {
       border-radius: 0.375rem;
       cursor: pointer;
       transition: background 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn-device-lock:hover:not(:disabled) {
       background: rgba(239, 68, 68, 0.32);
@@ -846,6 +903,8 @@ interface EndTimeModalTarget {
       padding: 0.15rem 0.5rem;
       border-radius: 0.375rem;
       text-transform: uppercase;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .device-badge.active {
       background: rgba(34, 197, 94, 0.2);
@@ -861,12 +920,19 @@ interface EndTimeModalTarget {
     }
     .schedule-summary {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 0.375rem;
       font-size: 0.75rem;
       color: #94a3b8;
       padding-top: 0.5rem;
       border-top: 1px solid #334155;
+    }
+    .sched-icon {
+      flex-shrink: 0;
+    }
+    .sched-text {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     /* Modals */
     .modal-backdrop {
@@ -877,7 +943,8 @@ interface EndTimeModalTarget {
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 1rem;
+      overflow-y: auto;
+      padding: calc(1rem + env(safe-area-inset-top, 0px)) max(0.75rem, env(safe-area-inset-right, 0px)) calc(1rem + env(safe-area-inset-bottom, 0px)) max(0.75rem, env(safe-area-inset-left, 0px));
       z-index: 50;
     }
     .modal-card {
@@ -887,6 +954,11 @@ interface EndTimeModalTarget {
       padding: 1.5rem;
       width: 100%;
       max-width: 440px;
+      max-height: calc(100vh - 2rem);
+      max-height: calc(100dvh - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      overflow-y: auto;
+      margin: auto;
+      min-width: 0;
     }
     .modal-card.wide {
       max-width: 620px;
@@ -908,7 +980,11 @@ interface EndTimeModalTarget {
       font-size: 0.75rem;
     }
     .time-picker-lg {
+      display: block;
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       font-size: 1.5rem !important;
       font-weight: 700;
       padding: 0.75rem 1rem !important;
@@ -974,24 +1050,36 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-top: 1.25rem;
     }
+    .modal-actions-split.single-group {
+      justify-content: flex-end;
+    }
     .modal-actions-right {
       display: flex;
+      flex-wrap: wrap;
       gap: 0.5rem;
     }
     .pairing-code-box {
       font-family: monospace;
-      font-size: 2.5rem;
+      font-size: clamp(1.6rem, 7vw, 2.5rem);
       font-weight: 800;
-      letter-spacing: 0.35rem;
+      letter-spacing: clamp(0.15rem, 1.5vw, 0.35rem);
       color: #818cf8;
       background: #0f172a;
       padding: 1rem;
       border-radius: 0.75rem;
       border: 2px dashed #4f46e5;
       margin: 1rem 0 0.5rem 0;
+      overflow-wrap: anywhere;
+      max-width: 100%;
+    }
+    .pairing-code-box.generating {
+      font-size: 1.125rem;
+      letter-spacing: 0.05rem;
+      font-weight: 600;
     }
     .code-timer {
       font-size: 0.75rem;
@@ -1002,6 +1090,10 @@ interface EndTimeModalTarget {
       font-size: 0.8125rem;
       color: #cbd5e1;
       margin: 1.25rem 0;
+      padding-left: 0;
+    }
+    .pairing-instructions ol {
+      margin: 0;
       padding-left: 1.25rem;
     }
     .pairing-instructions li {
@@ -1012,6 +1104,8 @@ interface EndTimeModalTarget {
     }
     .btn-download-installer {
       display: inline-block;
+      max-width: 100%;
+      box-sizing: border-box;
       background: rgba(99, 102, 241, 0.16);
       border: 1px solid rgba(99, 102, 241, 0.4);
       color: #c7d2fe;
@@ -1046,6 +1140,7 @@ interface EndTimeModalTarget {
     .modal-actions {
       display: flex;
       justify-content: flex-end;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-top: 1.25rem;
     }
@@ -1056,6 +1151,12 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
+      gap: 0.75rem;
+    }
+    .modal-header-between > div,
+    .modal-header-between h3 {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .btn-close {
       background: transparent;
@@ -1063,6 +1164,9 @@ interface EndTimeModalTarget {
       color: #94a3b8;
       font-size: 1.25rem;
       cursor: pointer;
+      flex-shrink: 0;
+      padding: 0.25rem;
+      line-height: 1;
     }
     .btn-secondary {
       background: #334155;
@@ -1100,6 +1204,7 @@ interface EndTimeModalTarget {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 0.75rem;
       background: #0f172a;
       border: 1px solid #334155;
       border-radius: 0.5rem;
@@ -1120,7 +1225,12 @@ interface EndTimeModalTarget {
     .time-col {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.75rem;
+    }
+    .time-field {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
     }
     .time-col.disabled {
       opacity: 0.35;
@@ -1136,6 +1246,8 @@ interface EndTimeModalTarget {
       color: #f8fafc;
       padding: 0.25rem 0.5rem;
       font-size: 0.8125rem;
+      color-scheme: dark;
+      min-width: 0;
     }
     /* Simple switch */
     .toggle-switch {
@@ -1143,6 +1255,7 @@ interface EndTimeModalTarget {
       display: inline-block;
       width: 34px;
       height: 20px;
+      flex-shrink: 0;
     }
     .toggle-switch input {
       opacity: 0;
@@ -1173,6 +1286,135 @@ interface EndTimeModalTarget {
     }
     input:checked + .slider:before {
       transform: translateX(14px);
+    }
+    @media (max-width: 640px) {
+      .navbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+        padding: calc(0.875rem + env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) 0.875rem max(1rem, env(safe-area-inset-left, 0px));
+      }
+      .nav-right {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.5rem;
+      }
+      .btn-logout {
+        margin-left: auto;
+      }
+      .main-content {
+        padding: 1rem max(1rem, env(safe-area-inset-right, 0px)) calc(1.5rem + env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+      }
+      .requests-section {
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .grant-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+        gap: 0.45rem;
+      }
+      .btn-grant,
+      .btn-deny {
+        text-align: center;
+        padding: 0.5rem 0.4rem;
+      }
+      .section-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+      }
+      .section-header .btn-primary-sm {
+        align-self: flex-start;
+      }
+      .child-card {
+        padding: 1rem;
+      }
+      .child-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+      }
+      .child-menu-btns {
+        justify-content: flex-start;
+        gap: 0.4rem;
+      }
+      .child-menu-btns .btn-icon {
+        flex: 1 1 auto;
+        text-align: center;
+      }
+      .device-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+        padding: 0.65rem 0;
+      }
+      .device-info {
+        flex: none;
+        width: 100%;
+      }
+      .device-right-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .btn-device-edit,
+      .btn-device-unlock,
+      .btn-device-lock {
+        padding: 0.35rem 0.6rem;
+      }
+      .modal-card {
+        padding: 1.125rem;
+        border-radius: 0.875rem;
+      }
+      .time-picker-lg {
+        font-size: 1.25rem !important;
+        padding: 0.625rem 0.75rem !important;
+      }
+      .schedule-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.625rem;
+        padding: 0.625rem 0.75rem;
+      }
+      .time-col {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 0.5rem;
+        width: 100%;
+      }
+      .time-field {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.2rem;
+        min-width: 0;
+      }
+      .time-col input[type="time"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.4rem 0.5rem;
+        font-size: 0.875rem;
+      }
+    }
+    @media (max-width: 480px) {
+      .modal-actions-split {
+        flex-direction: column-reverse;
+        align-items: stretch;
+      }
+      .modal-actions-right {
+        width: 100%;
+      }
+      .modal-actions-right button {
+        flex: 1 1 auto;
+        text-align: center;
+      }
+      .modal-actions-split > .btn-deny {
+        width: 100%;
+        text-align: center;
+      }
+      .modal-actions button {
+        flex: 1 1 auto;
+        text-align: center;
+      }
     }
   `]
 })
