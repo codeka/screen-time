@@ -2,13 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Screen Time Device Registration"
-        Width="460" Height="480"
+        Width="460" Height="510"
         WindowStartupLocation="CenterScreen"
         WindowStyle="SingleBorderWindow"
+        Icon="pack://application:,,,/app.ico"
         Background="#0F172A">
     <Grid Margin="32">
         <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="⏱️" FontSize="44" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+            <Image Source="pack://application:,,,/Assets/app-icon.png" Width="72" Height="72" HorizontalAlignment="Center" Margin="0,0,0,10" RenderOptions.BitmapScalingMode="HighQuality"/>
             <TextBlock Text="Device Setup" FontSize="24" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center"/>
             <TextBlock Text="Enter the 6-character pairing code from the parent portal to link this Windows PC."
                        FontSize="13" Foreground="#94A3B8" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,24"/>

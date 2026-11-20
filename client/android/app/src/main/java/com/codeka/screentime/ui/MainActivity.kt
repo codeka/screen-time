@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,11 +20,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.codeka.screentime.R
 import com.codeka.screentime.api.ApiClient
 import com.codeka.screentime.data.DevicePrefs
 import com.codeka.screentime.service.ScreenTimeService
@@ -133,7 +136,11 @@ fun OverlayPermissionScreen(onGrantClicked: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(text = "🛡️", fontSize = 48.sp)
+        Image(
+            painter = painterResource(id = R.drawable.ic_app_logo),
+            contentDescription = "Screen Time",
+            modifier = Modifier.size(76.dp)
+        )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "Permission Required",
@@ -180,8 +187,12 @@ fun PairingScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(text = "⏱️", fontSize = 44.sp)
-        Spacer(modifier = Modifier.height(8.dp))
+        Image(
+            painter = painterResource(id = R.drawable.ic_app_logo),
+            contentDescription = "Screen Time",
+            modifier = Modifier.size(76.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = "Pair This Phone",
             fontSize = 24.sp,
@@ -308,8 +319,25 @@ fun AlreadyPairedScreen(prefs: DevicePrefs, onUnpair: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(text = "✅", fontSize = 48.sp)
-        Spacer(modifier = Modifier.height(16.dp))
+        Image(
+            painter = painterResource(id = R.drawable.ic_app_logo),
+            contentDescription = "Screen Time",
+            modifier = Modifier.size(76.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Surface(
+            color = Color(0xFF064E3B),
+            shape = RoundedCornerShape(999.dp)
+        ) {
+            Text(
+                text = "✓ Active & Protected",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF6EE7B7),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = "Device Managed",
             fontSize = 22.sp,

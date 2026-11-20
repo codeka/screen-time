@@ -7,6 +7,12 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request));
+  }
+});
+
 self.addEventListener('push', (event) => {
   let data = {
     title: 'Screen Time Alert',
@@ -51,8 +57,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
+    icon: data.icon || '/icons/icon-192.png',
+    badge: '/icons/badge-96.png',
     tag: data.tag || 'screentime-request',
     renotify: true,
     requireInteraction: !!payloadData.request_id,

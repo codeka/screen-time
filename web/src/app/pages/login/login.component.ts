@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
+import { PwaInstallService } from '../../services/pwa-install.service';
 
 @Component({
   selector: 'app-login',
@@ -12,7 +13,7 @@ import { AuthService } from '../../services/auth.service';
     <div class="auth-container">
       <div class="auth-card">
         <div class="auth-header">
-          <div class="app-icon">⏱️</div>
+          <img src="/icons/icon-192.png" alt="Screen Time" class="app-icon-img" />
           <h1>Screen Time Admin</h1>
           <p class="subtitle">Unified parent portal for Windows & Android</p>
         </div>
@@ -111,6 +112,11 @@ import { AuthService } from '../../services/auth.service';
             </button>
           </form>
         }
+        @if (pwa.canInstall()) {
+          <button type="button" class="btn-install-app" (click)="pwa.install()">
+            📲 Install App
+          </button>
+        }
       </div>
     </div>
   `,
@@ -137,9 +143,12 @@ import { AuthService } from '../../services/auth.service';
       text-align: center;
       margin-bottom: 1.75rem;
     }
-    .app-icon {
-      font-size: 2.75rem;
-      margin-bottom: 0.5rem;
+    .app-icon-img {
+      width: 72px;
+      height: 72px;
+      display: block;
+      margin: 0 auto 0.75rem;
+      filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.35));
     }
     h1 {
       font-size: 1.5rem;
@@ -231,11 +240,28 @@ import { AuthService } from '../../services/auth.service';
       opacity: 0.6;
       cursor: not-allowed;
     }
+    .btn-install-app {
+      width: 100%;
+      padding: 0.75rem;
+      background: rgba(99, 102, 241, 0.16);
+      color: #c7d2fe;
+      border: 1px solid #6366f1;
+      border-radius: 0.625rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 0.75rem;
+      transition: background 0.2s;
+    }
+    .btn-install-app:hover {
+      background: rgba(99, 102, 241, 0.3);
+    }
   `]
 })
 export class LoginComponent {
   private auth = inject(AuthService);
   private router = inject(Router);
+  pwa = inject(PwaInstallService);
 
   mode = signal<'login' | 'register'>('login');
   loading = signal<boolean>(false);

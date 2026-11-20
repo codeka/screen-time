@@ -6,6 +6,7 @@
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"
+        Icon="pack://application:,,,/app.ico"
         Background="#0F172A">
     <Grid>
         <!-- Background subtle glow -->
@@ -34,6 +35,7 @@
             </Border.Effect>
 
             <StackPanel HorizontalAlignment="Center">
+                <Image Source="pack://application:,,,/Assets/app-icon.png" Width="56" Height="56" HorizontalAlignment="Center" Margin="0,0,0,12" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <!-- Clock -->
                 <TextBlock x:Name="ClockText" 
                            Text="12:00 PM" 

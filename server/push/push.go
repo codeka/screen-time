@@ -3,8 +3,11 @@ package push
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
@@ -31,10 +34,15 @@ func NewPushManager(db *sql.DB) *PushManager {
 		}
 	}
 
+	contact := os.Getenv("VAPID_CONTACT")
+	if contact == "" {
+		contact = "admin@codeka.com"
+	}
+
 	return &PushManager{
 		VapidPublicKey:  publicKey,
 		VapidPrivateKey: privateKey,
-		ContactEmail:    "mailto:admin@screentime.local",
+		ContactEmail:    contact,
 		db:              db,
 	}
 }
@@ -62,6 +70,12 @@ func (p *PushManager) SendToFamily(familyID string, payload PushPayload) {
 
 	payloadBytes, _ := json.Marshal(payload)
 
+	subscriber := p.ContactEmail
+	if !strings.HasPrefix(subscriber, "https:") {
+		// webpush-go prepends "mailto:" automatically for non-https subscribers.
+		subscriber = strings.TrimPrefix(subscriber, "mailto:")
+	}
+
 	for rows.Next() {
 		var endpoint, p256dh, auth string
 		if err := rows.Scan(&endpoint, &p256dh, &auth); err != nil {
@@ -78,21 +92,28 @@ func (p *PushManager) SendToFamily(familyID string, payload PushPayload) {
 
 		go func(sub *webpush.Subscription) {
 			resp, err := webpush.SendNotification(payloadBytes, sub, &webpush.Options{
-				Subscriber:      p.ContactEmail,
+				Subscriber:      subscriber,
 				VAPIDPublicKey:  p.VapidPublicKey,
 				VAPIDPrivateKey: p.VapidPrivateKey,
-				TTL:             180, // 3 minutes
+				TTL:             1800,                // 30 minutes so alerts survive transient connectivity gaps
+				Urgency:         webpush.UrgencyHigh, // Wake Android devices in Doze immediately
 			})
 			if err != nil {
 				log.Printf("[Push] Error sending push: %v", err)
 				return
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
-				// Expired subscription, clean up
-				p.db.Exec("DELETE FROM push_subscriptions WHERE endpoint = ?", sub.Endpoint)
+			if resp.StatusCode == http.StatusGone ||
+				resp.StatusCode == http.StatusNotFound ||
+				resp.StatusCode == http.StatusUnauthorized ||
+				resp.StatusCode == http.StatusForbidden {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+				log.Printf("[Push] Removing invalid/expired subscription (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+				_, _ = p.db.Exec("DELETE FROM push_subscriptions WHERE endpoint = ?", sub.Endpoint)
+			} else if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+				log.Printf("[Push] Push delivery returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 			}
 		}(s)
 	}
 }
-

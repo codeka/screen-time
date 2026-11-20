@@ -13,4 +13,9 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Resource Include="app.ico" />
+    <Resource Include="Assets\app-icon.png" />
+  </ItemGroup>
+
 </Project>

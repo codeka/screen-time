@@ -22,10 +22,12 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import com.codeka.screentime.R
 import com.codeka.screentime.ScreenTimeApp
 import com.codeka.screentime.api.ApiClient
 import com.codeka.screentime.api.RealtimeClient
@@ -242,6 +244,16 @@ class ScreenTimeService : Service() {
             setPadding(48, 48, 48, 48)
         }
 
+        val density = resources.displayMetrics.density
+        val logoSize = (56 * density).toInt()
+        val logoView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_app_logo)
+            contentDescription = "Screen Time"
+            layoutParams = LinearLayout.LayoutParams(logoSize, logoSize).apply {
+                bottomMargin = (12 * density).toInt()
+            }
+        }
+
         val clockText = TextView(this).apply {
             textSize = 40f
             setTextColor(Color.WHITE)
@@ -311,6 +323,7 @@ class ScreenTimeService : Service() {
             }
         }
 
+        card.addView(logoView)
         card.addView(clockText)
         card.addView(greetingText)
         card.addView(statusText)
@@ -388,7 +401,7 @@ class ScreenTimeService : Service() {
         val notification = NotificationCompat.Builder(this, ScreenTimeApp.CHANNEL_ALERTS)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(R.drawable.ic_stat_screentime)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .addAction(0, "✋ Request More Time", requestPendingIntent)
@@ -408,7 +421,7 @@ class ScreenTimeService : Service() {
         return NotificationCompat.Builder(this, ScreenTimeApp.CHANNEL_SERVICE)
             .setContentTitle("Screen Time Active")
             .setContentText("Device is monitored and protected")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(R.drawable.ic_stat_screentime)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)

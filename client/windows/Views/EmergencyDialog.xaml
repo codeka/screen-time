@@ -6,6 +6,7 @@
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="NoResize"
+        Icon="pack://application:,,,/app.ico"
         Background="#1E293B">
     <Border BorderBrush="#475569" BorderThickness="1" CornerRadius="12" Padding="24">
         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">

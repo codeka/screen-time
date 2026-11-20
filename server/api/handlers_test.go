@@ -2,10 +2,15 @@ package api_test
 
 import (
 	"bytes"
+	"crypto/elliptic"
+	"crypto/rand"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +37,25 @@ func setupTestServer(t *testing.T) (*api.Server, func()) {
 	}
 
 	return server, cleanup
+}
+
+func setupTestServerWithDB(t *testing.T) (*api.Server, *sql.DB, func()) {
+	tmpFile := "test_screentime_" + time.Now().Format("150405.000") + ".db"
+	database, err := db.InitDB(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to init test db: %v", err)
+	}
+
+	server := api.NewServer(database, "")
+
+	cleanup := func() {
+		database.Close()
+		os.Remove(tmpFile)
+		os.Remove(tmpFile + "-wal")
+		os.Remove(tmpFile + "-shm")
+	}
+
+	return server, database, cleanup
 }
 
 func TestCompleteWorkflow(t *testing.T) {
@@ -410,6 +434,248 @@ func TestWindowsAutoUpdateEndpoints(t *testing.T) {
 	server.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), dummyBytes) {
 		t.Fatalf("Expected 200 OK with exact installer bytes, got %d (%d bytes)", w.Code, w.Body.Len())
+	}
+}
+
+func TestPushSubscriptionRotationAndCleanup(t *testing.T) {
+	server, database, cleanup := setupTestServerWithDB(t)
+	defer cleanup()
+
+	// 1. Register parent, create child, pair device
+	regPayload := `{"family_name":"The Millers","display_name":"Dad","email":"dad@example.com","password":"secretpassword123"}`
+	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBufferString(regPayload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Register failed: %d %s", w.Code, w.Body.String())
+	}
+	var authResp models.AuthResponse
+	json.NewDecoder(w.Body).Decode(&authResp)
+	parentToken := authResp.Token
+
+	req = httptest.NewRequest("POST", "/api/children", bytes.NewBufferString(`{"display_name":"Lucas","emergency_contact":""}`))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var childResp map[string]string
+	json.NewDecoder(w.Body).Decode(&childResp)
+	childID := childResp["id"]
+
+	req = httptest.NewRequest("POST", "/api/children/"+childID+"/pairing-code", nil)
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var codeResp models.GeneratePairingCodeResponse
+	json.NewDecoder(w.Body).Decode(&codeResp)
+
+	pairBody, _ := json.Marshal(models.PairDeviceRequest{
+		PairingCode: codeResp.PairingCode,
+		Platform:    "WINDOWS",
+		DeviceName:  "Lucas PC",
+	})
+	req = httptest.NewRequest("POST", "/api/devices/pair", bytes.NewReader(pairBody))
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	var pairResp models.PairDeviceResponse
+	json.NewDecoder(w.Body).Decode(&pairResp)
+	deviceToken := pairResp.AuthToken
+
+	// 2. Mock push service that records headers and returns 403 Forbidden
+	type pushCapture struct {
+		urgency string
+		ttl     string
+		authHdr string
+	}
+	capturedCh := make(chan pushCapture, 1)
+	mockPush := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case capturedCh <- pushCapture{
+			urgency: r.Header.Get("Urgency"),
+			ttl:     r.Header.Get("TTL"),
+			authHdr: r.Header.Get("Authorization"),
+		}:
+		default:
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("VAPID credentials mismatch"))
+	}))
+	defer mockPush.Close()
+
+	// Generate valid P-256 ECDH public key & 16-byte auth secret for webpush encryption
+	_, x, y, err := elliptic.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate P256 key: %v", err)
+	}
+	p256dh := base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), x, y))
+	authBytes := make([]byte, 16)
+	if _, err := rand.Read(authBytes); err != nil {
+		t.Fatalf("Failed to generate auth bytes: %v", err)
+	}
+	authSecret := base64.StdEncoding.EncodeToString(authBytes)
+
+	// 3. Save initial subscription, then rotate with old_endpoint
+	oldEndpoint := mockPush.URL + "/old-sub"
+	newEndpoint := mockPush.URL + "/new-sub"
+
+	sub1, _ := json.Marshal(map[string]string{
+		"endpoint": oldEndpoint,
+		"p256dh":   p256dh,
+		"auth":     authSecret,
+	})
+	req = httptest.NewRequest("POST", "/api/push/subscribe", bytes.NewReader(sub1))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Initial subscribe failed: %d %s", w.Code, w.Body.String())
+	}
+
+	sub2, _ := json.Marshal(map[string]string{
+		"endpoint":     newEndpoint,
+		"p256dh":       p256dh,
+		"auth":         authSecret,
+		"old_endpoint": oldEndpoint,
+	})
+	req = httptest.NewRequest("POST", "/api/push/subscribe", bytes.NewReader(sub2))
+	req.Header.Set("Authorization", "Bearer "+parentToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Rotate subscribe failed: %d %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(1) FROM push_subscriptions WHERE endpoint = ?", oldEndpoint).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("Expected old endpoint to be deleted on rotation, count=%d err=%v", count, err)
+	}
+	if err := database.QueryRow("SELECT COUNT(1) FROM push_subscriptions WHERE endpoint = ?", newEndpoint).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("Expected new endpoint to be present, count=%d err=%v", count, err)
+	}
+
+	// 4. Trigger push via POST /api/requests and verify Urgency, TTL, VAPID sub, and 403 cleanup
+	req = httptest.NewRequest("POST", "/api/requests", nil)
+	req.Header.Set("Authorization", "Bearer "+deviceToken)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Create screen time request failed: %d %s", w.Code, w.Body.String())
+	}
+
+	var cap pushCapture
+	select {
+	case cap = <-capturedCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for push request to hit mock push server")
+	}
+
+	if cap.urgency != "high" {
+		t.Fatalf("Expected Urgency=high, got %q", cap.urgency)
+	}
+	if cap.ttl != "1800" {
+		t.Fatalf("Expected TTL=1800, got %q", cap.ttl)
+	}
+
+	// Extract JWT from "vapid t=<jwt>, k=<pub>" and verify "sub" claim
+	jwtStart := strings.Index(cap.authHdr, "vapid t=")
+	commaIdx := strings.Index(cap.authHdr, ",")
+	if jwtStart == -1 || commaIdx == -1 {
+		t.Fatalf("Unexpected VAPID Authorization header: %q", cap.authHdr)
+	}
+	jwtStr := cap.authHdr[jwtStart+len("vapid t=") : commaIdx]
+	parts := strings.Split(jwtStr, ".")
+	if len(parts) != 3 {
+		t.Fatalf("Invalid JWT in VAPID header: %q", jwtStr)
+	}
+	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("Failed to decode VAPID JWT payload: %v", err)
+	}
+	var jwtClaims map[string]interface{}
+	if err := json.Unmarshal(claimsBytes, &jwtClaims); err != nil {
+		t.Fatalf("Failed to parse VAPID JWT claims: %v", err)
+	}
+	if jwtClaims["sub"] != "mailto:admin@codeka.com" {
+		t.Fatalf("Expected VAPID sub=mailto:admin@codeka.com, got %v", jwtClaims["sub"])
+	}
+
+	// Wait briefly for the async goroutine to delete the 403 subscription from SQLite
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		database.QueryRow("SELECT COUNT(1) FROM push_subscriptions WHERE endpoint = ?", newEndpoint).Scan(&count)
+		if count == 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if count != 0 {
+		t.Fatalf("Expected 403 Forbidden response to delete stale subscription, remaining count=%d", count)
+	}
+}
+
+func TestStaticManifestAndNoCacheHeaders(t *testing.T) {
+	tmpDB := "test_static_" + time.Now().Format("150405.000") + ".db"
+	database, err := db.InitDB(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer func() {
+		database.Close()
+		os.Remove(tmpDB)
+		os.Remove(tmpDB + "-wal")
+		os.Remove(tmpDB + "-shm")
+	}()
+
+	staticDir := t.TempDir()
+	if err := os.WriteFile(staticDir+"/index.html", []byte("<html><body>ok</body></html>"), 0644); err != nil {
+		t.Fatalf("Write index.html: %v", err)
+	}
+	if err := os.WriteFile(staticDir+"/manifest.webmanifest", []byte(`{"name":"Screen Time Admin"}`), 0644); err != nil {
+		t.Fatalf("Write manifest.webmanifest: %v", err)
+	}
+	if err := os.WriteFile(staticDir+"/manifest.json", []byte(`{"name":"Screen Time Admin"}`), 0644); err != nil {
+		t.Fatalf("Write manifest.json: %v", err)
+	}
+	if err := os.WriteFile(staticDir+"/sw.js", []byte("self.addEventListener('fetch', () => {});"), 0644); err != nil {
+		t.Fatalf("Write sw.js: %v", err)
+	}
+
+	server := api.NewServer(database, staticDir)
+
+	// 1. manifest.webmanifest returns application/manifest+json and no-cache
+	req := httptest.NewRequest("GET", "/manifest.webmanifest", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for manifest.webmanifest, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
+		t.Fatalf("Expected Content-Type application/manifest+json, got %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+		t.Fatalf("Expected no-cache Cache-Control for manifest.webmanifest, got %q", cc)
+	}
+
+	// 2. sw.js returns no-cache
+	req = httptest.NewRequest("GET", "/sw.js", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for sw.js, got %d", w.Code)
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+		t.Fatalf("Expected no-cache Cache-Control for sw.js, got %q", cc)
+	}
+
+	// 3. SPA route fallback serves index.html with no-cache
+	req = httptest.NewRequest("GET", "/dashboard", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for /dashboard fallback, got %d", w.Code)
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-cache") {
+		t.Fatalf("Expected no-cache Cache-Control for /dashboard SPA fallback, got %q", cc)
 	}
 }
 

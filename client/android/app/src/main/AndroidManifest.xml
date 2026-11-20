@@ -13,9 +13,9 @@
     <application
         android:name=".ScreenTimeApp"
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_lock_idle_lock"
+        android:icon="@mipmap/ic_launcher"
         android:label="Screen Time"
-        android:roundIcon="@android:drawable/ic_lock_idle_lock"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true">

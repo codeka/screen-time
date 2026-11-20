@@ -272,6 +272,16 @@ namespace ScreenTimeClient.Services
                 var sp = new System.Windows.Controls.StackPanel();
 
                 var headerRow = new System.Windows.Controls.DockPanel { LastChildFill = true };
+                var toastIcon = new System.Windows.Controls.Image
+                {
+                    Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/app-icon.png")),
+                    Width = 20,
+                    Height = 20,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                System.Windows.Media.RenderOptions.SetBitmapScalingMode(toastIcon, System.Windows.Media.BitmapScalingMode.HighQuality);
+                System.Windows.Controls.DockPanel.SetDock(toastIcon, System.Windows.Controls.Dock.Left);
                 var dismissBtn = new System.Windows.Controls.Button
                 {
                     Content = "✕",
@@ -298,6 +308,7 @@ namespace ScreenTimeClient.Services
                     FontSize = 13,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };
+                headerRow.Children.Add(toastIcon);
                 headerRow.Children.Add(dismissBtn);
                 headerRow.Children.Add(tTitle);
 

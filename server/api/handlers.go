@@ -109,6 +109,16 @@ func (s *Server) routes() {
 	s.router.HandleFunc("/", s.handleStaticSPA)
 }
 
+func setStaticAssetHeaders(w http.ResponseWriter, requestedPath string) {
+	base := filepath.Base(requestedPath)
+	if strings.HasSuffix(requestedPath, ".webmanifest") || base == "manifest.json" {
+		w.Header().Set("Content-Type", "application/manifest+json")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	} else if base == "sw.js" || base == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	}
+}
+
 func (s *Server) handleStaticSPA(w http.ResponseWriter, r *http.Request) {
 	if s.staticDir == "" {
 		http.NotFound(w, r)
@@ -121,12 +131,14 @@ func (s *Server) handleStaticSPA(w http.ResponseWriter, r *http.Request) {
 
 	info, err := os.Stat(targetPath)
 	if err == nil && !info.IsDir() {
+		setStaticAssetHeaders(w, requestedPath)
 		http.ServeFile(w, r, targetPath)
 		return
 	}
 
 	// Check if file exists inside static directory directly (e.g. /favicon.ico)
 	if strings.Contains(requestedPath, ".") && err == nil {
+		setStaticAssetHeaders(w, requestedPath)
 		http.ServeFile(w, r, targetPath)
 		return
 	}
@@ -134,6 +146,7 @@ func (s *Server) handleStaticSPA(w http.ResponseWriter, r *http.Request) {
 	// Fallback to index.html for Angular SPA client-side routes (e.g. /login, /dashboard)
 	indexPath := filepath.Join(s.staticDir, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		http.ServeFile(w, r, indexPath)
 		return
 	}
@@ -212,6 +225,7 @@ func (s *Server) startWatchdog() {
 					s.push.SendToFamily(familyID, push.PushPayload{
 						Title: "Device Offline Alert",
 						Body:  fmt.Sprintf("%s's device (%s) has stopped checking in.", childName, devName),
+						Icon:  "/icons/icon-192.png",
 						Tag:   "device-offline-" + devID,
 					})
 				}
@@ -935,30 +949,41 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 
 	// Check if already pending
 	var existingID string
+	var existingCreatedAt time.Time
 	err := s.db.QueryRow(`
-		SELECT id FROM screen_time_requests
+		SELECT id, created_at FROM screen_time_requests
 		WHERE device_id = ? AND status = 'PENDING'
-	`, claims.DeviceID).Scan(&existingID)
+	`, claims.DeviceID).Scan(&existingID, &existingCreatedAt)
+
+	now := time.Now().UTC()
+	reqID := existingID
+	statusCode := http.StatusOK
 
 	if err == nil {
-		// Existing pending request already in flight
-		jsonResp(w, http.StatusOK, map[string]string{
-			"status":     "PENDING",
-			"request_id": existingID,
-		})
-		return
-	}
+		if !existingCreatedAt.IsZero() && now.Sub(existingCreatedAt) < 30*time.Second {
+			// Existing pending request already in flight within debounce window
+			jsonResp(w, http.StatusOK, map[string]string{
+				"status":     "PENDING",
+				"request_id": existingID,
+			})
+			return
+		}
+		if _, err := s.db.Exec("UPDATE screen_time_requests SET created_at = ? WHERE id = ?", now, existingID); err != nil {
+			http.Error(w, `{"error":"failed to refresh request"}`, http.StatusInternalServerError)
+			return
+		}
+	} else {
+		reqID = auth.GenerateUUID()
+		statusCode = http.StatusCreated
 
-	reqID := auth.GenerateUUID()
-	now := time.Now().UTC()
-
-	_, err = s.db.Exec(`
-		INSERT INTO screen_time_requests (id, device_id, child_id, status, created_at)
-		VALUES (?, ?, ?, 'PENDING', ?)
-	`, reqID, claims.DeviceID, claims.ChildID, now)
-	if err != nil {
-		http.Error(w, `{"error":"failed to create request"}`, http.StatusInternalServerError)
-		return
+		_, err = s.db.Exec(`
+			INSERT INTO screen_time_requests (id, device_id, child_id, status, created_at)
+			VALUES (?, ?, ?, 'PENDING', ?)
+		`, reqID, claims.DeviceID, claims.ChildID, now)
+		if err != nil {
+			http.Error(w, `{"error":"failed to create request"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Fetch details for notification
@@ -992,6 +1017,7 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 	s.push.SendToFamily(familyID, push.PushPayload{
 		Title: "Screen Time Request",
 		Body:  pushBody,
+		Icon:  "/icons/icon-192.png",
 		Tag:   "screen-time-request-" + reqID,
 		Data: map[string]interface{}{
 			"type":         "SCREEN_TIME_REQUEST",
@@ -1003,7 +1029,7 @@ func (s *Server) handleCreateScreenTimeRequest(w http.ResponseWriter, r *http.Re
 		},
 	})
 
-	jsonResp(w, http.StatusCreated, map[string]string{
+	jsonResp(w, statusCode, map[string]string{
 		"status":     "PENDING",
 		"request_id": reqID,
 	})
@@ -1294,13 +1320,18 @@ func (s *Server) handleGetVapidPublicKey(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleSavePushSubscription(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(userClaimsKey).(*auth.UserClaims)
 	var req struct {
-		Endpoint string `json:"endpoint"`
-		P256dh   string `json:"p256dh"`
-		Auth     string `json:"auth"`
+		Endpoint    string `json:"endpoint"`
+		P256dh      string `json:"p256dh"`
+		Auth        string `json:"auth"`
+		OldEndpoint string `json:"old_endpoint,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Endpoint == "" {
 		http.Error(w, `{"error":"invalid subscription"}`, http.StatusBadRequest)
 		return
+	}
+
+	if req.OldEndpoint != "" && req.OldEndpoint != req.Endpoint {
+		s.db.Exec("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?", req.OldEndpoint, claims.UserID)
 	}
 
 	subID := auth.GenerateUUID()
@@ -1382,4 +1413,3 @@ func jsonResp(w http.ResponseWriter, code int, v interface{}) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
-

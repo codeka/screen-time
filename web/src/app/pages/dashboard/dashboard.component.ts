@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { PushService } from '../../services/push.service';
+import { PwaInstallService } from '../../services/pwa-install.service';
 import { RealtimeService } from '../../services/realtime.service';
 import { ChildProfile, ScheduleRule, ScreenTimeRequest, Device } from '../../models/types';
 import { Subscription } from 'rxjs';
@@ -26,7 +27,7 @@ interface EndTimeModalTarget {
       <!-- Navbar -->
       <header class="navbar">
         <div class="nav-left">
-          <div class="logo-badge">⏱️</div>
+          <img src="/icons/icon-192.png" alt="Screen Time" class="logo-badge-img" />
           <div>
             <h2 class="family-title">{{ auth.familyName() || 'Family Portal' }}</h2>
             <div class="user-subtitle">Logged in as {{ auth.currentUser()?.display_name }} (Parent)</div>
@@ -38,6 +39,12 @@ interface EndTimeModalTarget {
             <span class="dot"></span>
             {{ realtime.isConnected() ? 'Live' : 'Connecting' }}
           </div>
+
+          @if (pwa.canInstall()) {
+            <button class="btn-install" (click)="pwa.install()">
+              📲 Install App
+            </button>
+          }
 
           @if (push.isSupported() && !push.isSubscribed()) {
             <button class="btn-push" (click)="enablePush()">
@@ -466,8 +473,12 @@ interface EndTimeModalTarget {
       align-items: center;
       gap: 0.75rem;
     }
-    .logo-badge {
-      font-size: 1.75rem;
+    .logo-badge-img {
+      width: 38px;
+      height: 38px;
+      display: block;
+      flex-shrink: 0;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
     }
     .family-title {
       font-size: 1.125rem;
@@ -503,6 +514,19 @@ interface EndTimeModalTarget {
       height: 0.5rem;
       border-radius: 9999px;
       background: currentColor;
+    }
+    .btn-install {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid #6366f1;
+      color: #c7d2fe;
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-install:hover {
+      background: rgba(99, 102, 241, 0.35);
     }
     .btn-push {
       background: #4f46e5;
@@ -1156,6 +1180,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   api = inject(ApiService);
   auth = inject(AuthService);
   push = inject(PushService);
+  pwa = inject(PwaInstallService);
   realtime = inject(RealtimeService);
 
   loading = signal<boolean>(true);
@@ -1227,6 +1252,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.initScheduleState();
     this.checkInitialCustomRequestParam();
     this.refreshAll();
+    this.push.checkSubscription();
 
     // Listen to real-time WebSocket events
     this.sub = this.realtime.events$.subscribe((event) => {
